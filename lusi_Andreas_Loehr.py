@@ -521,11 +521,14 @@ class LusiModel(tf.keras.Model):
     def evaluate(self, test_dataset, eval_metrics, training=False):
         """Evaluate model on test dataset given eval_metrics.
         
-        test_dataset :: tf batched dataset or tuple of np.array
+        Parameters:
 
+        test_dataset :: tf batched dataset or tuple of np.ndarrays
         eval_metrics :: list of tf metrics proccessed by 'modify_metric'.        
-        """
         
+        Returns:
+        List of results from evaluation metrics calculated over test_dataset.
+        """
         
         if not ((isinstance(test_dataset, tuple) and isinstance(
             test_dataset[0], np.ndarray)) or isinstance(test_dataset,
@@ -537,7 +540,7 @@ class LusiModel(tf.keras.Model):
         
         if isinstance(test_dataset, tf.data.Dataset):
 
-            for _, (x_batch_test, y_batch_test) in enumerate(test_dataset):
+            for _, (pred_batch_test, x_batch_test, y_batch_test) in enumerate(test_dataset):
             
                 for eval_metric in eval_metrics:
                     eval_metric.update_state(y_batch_test, tf.round(self.model(x_batch_test)))
@@ -552,56 +555,6 @@ class LusiModel(tf.keras.Model):
                 
         return [(eval_metric.name, eval_metric.result()) for eval_metric in eval_metrics]
         
-            
-
-    # def evaluate(self, test_dataset, eval_metrics, training=False):
-    #     """Evaluate model on test dataset given eval_metrics.
-        
-    #     test_dataset :: tf batched dataset.
-
-    #     eval_metrics :: list of tf metrics proccessed by 'modify_metric'.        
-    #     """
-
-    #     for _, (pred_batch_test, x_batch_test, y_batch_test) in enumerate(test_dataset):
-            
-    #         for eval_metric in eval_metrics:
-    #             if eval_metric.expected_input == "loss":
-    #                 if not training:
-    #                     loss_val = 0
-    #                 eval_metric.update_state(loss_val)    
-    #             elif eval_metric.expected_input == "pred_and_true":    
-    #                 eval_metric.update_state(y_batch_test, tf.round(self.model(x_batch_test)))
-                
-    #     return [(eval_metric.name, eval_metric.result()) for eval_metric in eval_metrics]
-
-    def evaluate_testset(self, x_test, y_test, eval_metrics):
-        """Evaluate model on test dataset given eval_metrics.
-        
-        test_dataset :: tf batched dataset.
-
-        eval_metrics :: list of tf metrics proccessed by 'modify_metric'.        
-        """
-        # make sure to reset metric before updating.
-
-        y_pred = self.predict(x_test)
-
-        for eval_metric in eval_metrics:
-            eval_metric.reset_state()
-            eval_metric.update_state(y_test, tf.round(self.model(x_test)))
-
-        # for _, (pred_batch_test, x_batch_test, y_batch_test) in enumerate(test_dataset):
-            
-        #     for eval_metric in eval_metrics:
-        #         if eval_metric.expected_input == "loss":
-        #             if not training:
-        #                 loss_val = 0
-        #             eval_metric.update_state(loss_val)    
-        #         elif eval_metric.expected_input == "pred_and_true":    
-        #             eval_metric.update_state(y_batch_test, tf.round(self.model(x_batch_test)))
-                
-        return [(eval_metric.name, eval_metric.result()) for eval_metric in eval_metrics]
-
-
 
 
 
