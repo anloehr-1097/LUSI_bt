@@ -437,7 +437,7 @@ class LusiModel(tf.keras.Model):
 
                     # Logits for batch J recorded on gradient tape 
                     y_batch_1_pred = self.model(x_batch_1, training=True)
-                    
+
                     # prepare for multipication with predicate evaluations
                     # result: d identical columns where d = no. of predicates.
                     y_batch_1_pred = tf.broadcast_to(y_batch_1_pred,
@@ -748,4 +748,12 @@ if __name__ == "__main__":
     main()
 
 phi = np.asarray([avg_pixel_intensity, weighted_pixel_intesity, local_pixel_intensity_center])
-
+# Specify some evaluation metrics for custom model
+eval_metrics = [modify_metric(tf.keras.metrics.BinaryAccuracy(name="Binary Accuracy"), "pred_and_true"), 
+                modify_metric(tf.keras.metrics.FalsePositives(name="False Positives"), "pred_and_true"), 
+                modify_metric(tf.keras.metrics.FalseNegatives(name="False Negatives"), "pred_and_true"), 
+                modify_metric(tf.keras.metrics.Precision(name="Precision"), "pred_and_true"), 
+                modify_metric(tf.keras.metrics.Recall(name="Recall"), "pred_and_true"),
+                # modify_metric(tf.keras.metrics.Mean(name="Mean"), "loss"),
+                # modify_metric(tf.keras.metrics.Accuracy(), "pred_and_true")
+               ]

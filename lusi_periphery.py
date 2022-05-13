@@ -28,26 +28,18 @@ class Periphery:
         
         # create attributes with None values, will be populated in set_phi method
         self.phi = np.array([])
-        
-        self.phi_eval_train = None
-        self.phi_eval_test = None
+        self.phi_eval_train = tf.constant([])
+        self.phi_eval_test = tf.constant([])
         self.train_data = None
         self.test_data = None
         
         self.set_phi(phi)
-        
         self.set_train_data(train_data)
         self.set_test_data(test_data)
-        
-        
-        """
-        if self.train_data:
-            self.generate_batched_data(train=True)
-        
-        if self.test_data:
-            self.generate_batched_data(train=False)
-        """  
+
+        return None
     
+
     def generate_batch_data(self, batch_size_1=64, batch_size_2=64, train_only=False):
         """Generate batch datasets for training and test data.
         
@@ -55,14 +47,16 @@ class Periphery:
         Parameters:
         
         batch_size_1 :: int
-            
+            See paper for meaning of batch_size_1 denoted as B.
+        
         batch_size_2 :: int
+            See paper for meaning of batch_size_1 denoted as B'.
             
         train_only :: Bool
+            Create batch dataset for train data only.
         
         Returns:
         A tuple of batched datasets.
-        
         """
         
         # Check for provision of relevant data.
@@ -72,7 +66,7 @@ class Periphery:
         if not (self.test_data or train_only):
             raise ValueError("No test data provided.")
             
-        if not self.phi_eval_train:
+        if not (tf.size(self.phi_eval_train) > 0).numpy():
             raise ValueError("No phi evaluation data for training data provided.")
         
         #
@@ -92,7 +86,7 @@ class Periphery:
         
         
         # also generate batch dataset for test data
-        if not self.phi_eval_test:
+        if not (tf.size(self.phi_eval_test) > 0).numpy():
             raise ValueError("No phi evaluation data for test data provided.")
         
         dataset_test = tf.data.Dataset.from_tensor_slices((self.phi_eval_test,
@@ -106,9 +100,6 @@ class Periphery:
         batch_dataset_test = tf.data.Dataset.zip((batch_dataset_1_test, batch_dataset_2_test)) 
             
         return (batch_dataset_train, batch_dataset_test)
-    
-    
-    
    
             
     def apply_phi(self, which_dataset="both") -> None:
@@ -204,3 +195,90 @@ class Periphery:
             self.apply_phi("test")
 
         return None
+
+
+
+def get_data_excerpt(data, balanced=False, size_of_excerpt=0.5):
+    """
+    
+    This method is assuming a more or less balanced dataset to start with.
+
+    Parameters:
+
+    data :: tuple of np.ndarrays
+        Consists of ndarrays for x and y.
+        Assumes y made up of 2 classes.
+    
+    balanced :: bool
+        Determines if classes should be balanced.
+
+    size_of_excerpt :: [int | float]
+        Size of excerpt to be extracted from data.
+        If int is passed, then intepreted as abs. number of samples.
+        If float is passed, then interpreted as relative portion of data.
+
+    Returns:
+    tuple (x_exc, y_exc) of np.ndarrays.
+    """
+    
+    if isinstance(size_of_excerpt, float) and size_of_excerpt <= 1:
+        size_of_excerpt = np.floor(size_of_excerpt * data[0].shape[0]).astype(int)
+    
+    if not size_of_excerpt <= data[0].shape[0]:
+        raise IndexError("Sample Size too large.")
+    
+    permute = np.random.permutation(np.arange(size_of_excerpt))
+
+    if balanced:
+        y_cls = set(data[1])
+        print(f"No. of classes = {len(y_cls)}")
+        if len(y_cls) != 2:
+            raise Exception("Pass data for binary classification problem.")
+        
+        y_1_cls = y_cls.pop()
+        y_2_cls = y_cls.pop()
+        
+        x_1 = data[0][data[1] == y_1_cls]
+        x_2 = data[0][data[1] == y_2_cls]
+
+        y_1 = data[1][data[1] == y_1_cls]
+        y_2 = data[1][data[1] == y_2_cls]
+        ind_1 = np.random.randint(low=0, high=x_1.shape[0],
+                                          size=(size_of_excerpt//2).astype(int))
+        ind_2 = np.random.randint(low=0, high=x_2.shape[0],
+                                          size=(size_of_excerpt - \
+                                          (size_of_excerpt//2))).astype(int)
+        
+        x = np.concatenate([x_1[ind_1], x_2[ind_2]])
+        y = np.concatenate([y_1[ind_1], y_2[ind_2]])
+
+
+        if not permute.shape[0] == x.shape[0]:
+            raise Exception("Something has been lost on the way...")
+
+        return (x[permute],y[permute])
+    
+    else:
+        ind= np.random.random_integers(low=0, high=data[0].shape[0],
+                                       size=size_of_excerpt)
+        x = data[0][ind]
+        y = data[1][ind]
+
+        return (x[permute],y[permute])
+
+
+
+
+def visual_validation(n):
+    random_indices = np.random.randint(0, high=x_test.shape[0], size=20).reshape(5,4)
+    fig, ax = plt.subplots(nrows=5, ncols=4, figsize=(10,10))
+    fig.figsize=(10,10)
+
+    for i in range(5):
+        for j in range(4):
+            ax[i,j].imshow(x_test[random_indices[i,j]])
+            ax[i,j].set_title(f"pred: {lusi_net_test_pred[random_indices[i,j]][0]}, true: {y_test[random_indices[i,j]]}")
+            ax[i,j].axis("off")
+
+
+
