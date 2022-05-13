@@ -269,16 +269,16 @@ def get_data_excerpt(data, balanced=False, size_of_excerpt=0.5):
 
 
 
-def visual_validation(n):
-    random_indices = np.random.randint(0, high=x_test.shape[0], size=20).reshape(5,4)
-    fig, ax = plt.subplots(nrows=5, ncols=4, figsize=(10,10))
-    fig.figsize=(10,10)
+# def visual_validation(n):
+#     random_indices = np.random.randint(0, high=x_test.shape[0], size=20).reshape(5,4)
+#     fig, ax = plt.subplots(nrows=5, ncols=4, figsize=(10,10))
+#     fig.figsize=(10,10)
 
-    for i in range(5):
-        for j in range(4):
-            ax[i,j].imshow(x_test[random_indices[i,j]])
-            ax[i,j].set_title(f"pred: {lusi_net_test_pred[random_indices[i,j]][0]}, true: {y_test[random_indices[i,j]]}")
-            ax[i,j].axis("off")
+#     for i in range(5):
+#         for j in range(4):
+#             ax[i,j].imshow(x_test[random_indices[i,j]])
+#             ax[i,j].set_title(f"pred: {lusi_net_test_pred[random_indices[i,j]][0]}, true: {y_test[random_indices[i,j]]}")
+#             ax[i,j].axis("off")
 
 
 

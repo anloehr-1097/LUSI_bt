@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd 
 import functools
+import lusi_periphery
 
 class LusiLossNoBatch(tf.losses.Loss):
 
@@ -412,13 +413,16 @@ class LusiModel(tf.keras.Model):
                 # need total batch for evaluation and calc of
                 # 'true' loss.
 
-                x_total = tf.concat([x_batch_1, x_batch_2], axis=0)  # not sure if needed
+                x_total = tf.concat([x_batch_1, x_batch_2], axis=0)
                 
-                y_total = tf.concat([y_batch_1, y_batch_2], axis=0)
+                pred_total = tf.concat([pred_batch_1, pred_batch_2], axis=0)
                 
-                # Dirty solution -> one type for every tensor in advance
+                # y tensors must be of dim n x 1
+                y_batch_1 = tf.cast(y_batch_1, tf.float32)
+                y_batch_1= tf.expand_dims(y_batch_1, axis=1)
                 y_batch_2 = tf.cast(y_batch_2, tf.float32)
                 y_batch_2= tf.expand_dims(y_batch_2, axis=1)
+                y_total = tf.concat([y_batch_1, y_batch_2], axis=0)
                 
                 # Predictions on 2nd batch. This calc should not be recorded
                 # on gradient tape
@@ -440,11 +444,11 @@ class LusiModel(tf.keras.Model):
 
                     # prepare for multipication with predicate evaluations
                     # result: d identical columns where d = no. of predicates.
-                    y_batch_1_pred = tf.broadcast_to(y_batch_1_pred,
+                    y_batch_1_pred_broad = tf.broadcast_to(y_batch_1_pred,
                         shape=[y_batch_1_pred.shape[0], pred_batch_1.shape[1]])
                     
                     # Compute the loss value to be differentiated for batch.
-                    v = tf.reduce_mean(pred_batch_1 * y_batch_1_pred, axis=0, keepdims=True)
+                    v = tf.reduce_mean(pred_batch_1 * y_batch_1_pred_broad, axis=0, keepdims=True)
 
                     v_prime_inter = tf.broadcast_to(y_batch_2_pred - y_batch_2, 
                                                     shape=[y_batch_2.shape[0],
@@ -457,10 +461,27 @@ class LusiModel(tf.keras.Model):
                     # v_prime_times_weight_matrix = tf.matmul(self.m_inner_prod, tf.transpose(v_prime))
 
                     loss_value = tf.multiply(tf.Variable(2, dtype=tf.float32),
-                                            tf.tensordot(v, tf.matmul(self.m_inner_prod, tf.transpose(v_prime)), axes=1))
-                    
-                    actual_loss = None  # actual loss calc here
-                    
+                                    tf.tensordot(v,
+                                        tf.matmul(self.m_inner_prod,
+                                            tf.transpose(v_prime)), axes=1))
+
+                
+                y_pred_total = tf.concat([y_batch_1_pred, y_batch_2_pred], axis=0)
+                
+                
+                y_pred_total_inter = tf.broadcast_to(y_total - y_pred_total,
+                                        shape=[y_pred_total.shape[0],
+                                            pred_total.shape[1]]) 
+                v_actual_loss = tf.reduce_mean(pred_total * \
+                                               y_pred_total_inter,
+                                               axis=0, keepdims=True)
+
+                actual_loss = tf.multiply(tf.Variable(2, dtype=tf.float32),
+                                  tf.tensordot(v_actual_loss,
+                                      tf.matmul(self.m_inner_prod,
+                                          tf.transpose(v_actual_loss)), axes=1))
+                print(f"The actual loss is {actual_loss} and the loss for the gradient calc is {loss_value}.")
+                
                 watched_vars = tape.watched_variables()
                 # Use the gradient tape to automatically retrieve
                 # the gradients of the trainable variables with respect to the loss.
@@ -731,21 +752,8 @@ def modify_metric(metric, tag):
     return metric
 
 
-def main():
-    # bin_class = keras.Sequential(
-    # [
-    #     layers.Flatten(input_shape=(28,28)),
-    #     layers.Dense(700, activation="relu", name="hidden_layer_01"),
-    #     layers.Dense(1, name="output_layer", activation="sigmoid") # interpret output as prob. for class 1
-    # ]
-    # )
-    preds = np.mean
-    weight_matrix = np.diag(np.ones(3))
-    m = LusiModel(preds, weight_matrix, model=None)
-    m.summary()
 
-if __name__ == "__main__":
-    main()
+
 
 phi = np.asarray([avg_pixel_intensity, weighted_pixel_intesity, local_pixel_intensity_center])
 # Specify some evaluation metrics for custom model
@@ -757,3 +765,40 @@ eval_metrics = [modify_metric(tf.keras.metrics.BinaryAccuracy(name="Binary Accur
                 # modify_metric(tf.keras.metrics.Mean(name="Mean"), "loss"),
                 # modify_metric(tf.keras.metrics.Accuracy(), "pred_and_true")
                ]
+
+
+def main():
+
+    # create dataset
+    # load mnist
+    (x_train, y_train), (x_test, y_test) = keras.datasets.mnist.load_data()
+    # extract 7 and 8
+    eights = x_train[y_train == 8]/255
+    sevens = x_train[y_train == 7]/255
+    y_eights = np.ones(eights.shape[0])
+    y_sevens = np.zeros(sevens.shape[0])
+    # merge 7 and 8
+    x_train = np.concatenate([eights, sevens])
+    y_train = np.concatenate([y_eights, y_sevens])
+
+    # same for test data
+    eights_test = x_test[y_test == 8]/255
+    sevens_test = x_test[y_test == 7]/255
+    y_eights_test = np.ones(eights_test.shape[0])
+    y_sevens_test = np.zeros(sevens_test.shape[0])
+    x_test = np.concatenate([eights_test, sevens_test])
+    y_test = np.concatenate([y_eights_test, y_sevens_test])
+
+    data = lusi_periphery.Periphery((x_train, y_train), (x_test, y_test), phi)
+    train_batch, test_batch = data.generate_batch_data(54,32)
+     
+    # create model
+    w_matrix = tf.Variable(np.diag(np.ones(3)), dtype=tf.float32)
+    lusi_model = LusiModel(w_matrix)
+    lusi_model.add_optimizer(tf.keras.optimizers.SGD())
+    lusi_model.train_correct(train_batch, num_epochs=2)
+
+    return None
+
+if __name__ == "__main__":
+    main()
