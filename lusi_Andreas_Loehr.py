@@ -9,94 +9,37 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd 
 import functools
+from  pprint import pprint
 import lusi_periphery
-
-class LusiLossNoBatch(tf.losses.Loss):
-
-
-    def __init__(self, phi_x, tau, W):
-        """Initialize Loss object given predicates and weight matrix.
-
-        Assume that predicates are factorizing.
-        
-        Parameters:
-            phi_x :: tensor
-            array of evaluations of predicates over space X
-            dims: (batch_size, no_of_predicates)
-            
-            tau :: np.array
-            array of predicates over Y space.
-            
-            W :: tensor
-            symmetric, positive definite weight matrix of adequate dimensions.
-        """
-        
-        # Check if dims are ok
-        if not (tau.shape[0] == W.shape[0] and W.shape[0] == W.shape[1]):
-            raise Exception("Check dims tau and W.")
-
-        super().__init__()
-        self.phi_x = phi_x
-        self.tau = tau
-        self.W = W
-    
-
-    def call(self, y_pred, y_true):
-        # y_pred and y_true expected to have dims (batch_size, d0, ..., dN) where di means dimension i.
-        # Explicitly for bin. class - dims are given by (batch_size, d0)
-        
-        if not y_true.shape[0] == y_pred.shape[0]:
-            raise Exception("Check dims y-values.")
-        
-        if not self.phi_x.shape[1] == self.tau.shape[0]:
-            raise Exception("Check dims tau and phi_x")
-        
-        if not self.phi_x.shape[0] == y_pred.shape[0]:
-            raise Exception("Check dims y and phi_x")
-        
-        y_dim = y_true.shape[0]
-
-        # for each y_true, calc vector [tau_1(y_true), ..., tau_d(y_true)], same for y_pred
-        y_tau = [self.tau[i](y_true[j]) for j in range(y_true.shape[0])  for i in range(self.tau.shape[0])]        
-        y_true = tf.convert_to_tensor(y_tau, dtype=tf.float64)
-        y_true = tf.reshape(y_true, [y_dim, self.tau.shape[0]])
-
-        y_pred_tau = [self.tau[i](y_pred[j]) for j in range(y_pred.shape[0])  for i in range(self.tau.shape[0])]
-        y_pred = tf.convert_to_tensor(y_pred_tau, dtype=tf.float64)
-        y_pred = tf.reshape(y_pred,[y_dim, self.tau.shape[0]])
-        
-
-        
-        no_weight_loss = tf.reduce_mean(self.phi_x * (y_true - y_pred), axis=0)
-        # no_weight_loss should be tensor of dims (1, no_of_predicates)
-        no_weight_loss = tf.reshape(no_weight_loss, [self.tau.shape[0],1])
-
-        return dot(tf.transpose(no_weight_loss), no_weight_loss, self.W)
 
 
 class LusiModel(tf.keras.Model):
-    """Given a model, e.g. neural net, implement the LUSI approach."""
+    """Given a model, e.g. neural net, implement the LUSI approach.
+    
+    Note: This code has only been tested with neural nets defined via
+          keras API.
+    """
     
     def __init__(self, m_inner_prod, model=None, tau=None) -> None:
         """Instatiate model with custom training loop adapted to LUSI method.
 
         Parameters:
 
-        m_inner_prod :: tf.Variable with appropriate dims.
-        Matrix used for custom inner product in Lusi Loss ('M' in paper).
+        m_inner_prod :: tf.Variable with appropriate dims, format tf.float32.
+            Matrix used for custom inner product in Lusi Loss ('M' in paper).
 
-        model :: tensorflow model or None
-        Underlying model to be used to make predictions.
+        model :: tensorflow model | None.
+            Underlying model to be used to make predictions.
+            If no model is passed, use simple neural net as default.
 
-        tau :: 
-        Predicates of the form f : \mathcal{Y} -> \R.
-        See paper section 'factorizing predicates'.
-
+        tau :: np.ndarray of functions | None.
+            Predicates of the form f : \mathcal{Y} -> \R.
+            See paper section 'factorizing predicates'.
         """
-
-        super().__init__()
+        
+        super().__init__()  # This may not be necessary and cause problems.
         if not model:
-            # if no model given, use this small feedforward neural net as default
+            # if no model given, use this small neural net as default.
             self.model = keras.Sequential(
                 [layers.Flatten(input_shape=(28,28)),
                  layers.Dense(100, activation="relu", name="hidden_layer_01"),
@@ -109,299 +52,58 @@ class LusiModel(tf.keras.Model):
         self.m_inner_prod = m_inner_prod
         self.tau = tau
 
+        return None
+
 
     def summary(self):
-        return self.model.summary()
+        """Display model summary."""
 
+        return self.model.summary()
     
     def add_optimizer(self, optimizer) -> None:
         """Add tf optimizer to use."""
+
         self.optimizer = optimizer
 
-
-    def add_metrics(self, metrics) -> None:
-        pass
-
-
-    def train(self, train_dataset, num_epochs, batch_1_size,
-              train_metrics : list=[]):
-        """Training loop.
-    
-        Parameters:
-
-        train_dataset :: BatchDataSet
-        Must include predicates evaluated, x, y values.
-    
-        ...
-        """
-        assert self.optimizer, "No optimizer specified."
-        
-        epoch_train_metrics_results = []
-
-        for epoch in range(num_epochs):
-            print("\nStart of epoch %d" % (epoch,))   
-
-
-            # Iterate over the batches of the dataset.
-            for step, (pred_batch, x_batch_train, y_batch_train) in enumerate(train_dataset):
-            
-                x_J = x_batch_train[:batch_1_size]
-                x_J_prime = x_batch_train[batch_1_size:]
-                y_J_true = y_batch_train[:batch_1_size]
-                y_J_prime_true = y_batch_train[batch_1_size:]
-                
-                # Dirty solution -> one type for every tensor in advance
-                y_J_prime_true = tf.cast(y_J_prime_true, tf.float32)
-                y_J_prime_true = tf.expand_dims(y_J_prime_true, axis=1)
-                
-                
-                pred_J = pred_batch[:batch_1_size]
-                pred_J_prime = pred_batch[batch_1_size:]
-                
-                
-                
-                y_J_prime_pred = self.model(x_J_prime)
-                # Open a GradientTape to record the operations run
-                # during the forward pass, which enables auto-differentiation.
-                with tf.GradientTape() as tape:
-                    
-                    # Run the forward pass of the layer.
-                    # The operations that the layer applies
-                    # to its inputs are going to be recorded
-                    # on the GradientTape.
-                    
-                    y_J_pred = self.model(x_J, training=True)  # Logits for J batch recorded on gradient tape
-                    # tape.watch(y_J_pred)
-                    # y_J_test = k_bin_class(x_J, training=True)  # Logits for J batch recorded on gradient tape
-                    # y_pred = tf.concat([y_J_pred, y_J_prime_pred], axis=0)  # not sure if needed
-                    
-                    y_J_pred = tf.broadcast_to(y_J_pred, shape=[y_J_pred.shape[0], pred_J.shape[1]])
-                    
-                    # Compute the loss value for this minibatch.
-                    v = tf.reduce_mean(pred_J * y_J_pred, axis=0, keepdims=True)
-
-                    v_prime_inter = tf.broadcast_to(y_J_prime_pred - y_J_prime_true, 
-                                                    shape=[y_J_prime_true.shape[0], pred_J_prime.shape[1]])
-
-                    v_prime = tf.reduce_mean(pred_J_prime * v_prime_inter, axis=0, keepdims=True)
-                    
-                    
-                    v_prime_times_weight_matrix = tf.matmul(self.m_inner_prod, tf.transpose(v_prime))
-
-                    loss_value = tf.multiply(tf.Variable(2, dtype=tf.float32),
-                                            tf.tensordot(v, tf.matmul(self.m_inner_prod, tf.transpose(v_prime)), axes=1))
-                    
-                # watched_vars = tape.watched_variables()
-                # Use the gradient tape to automatically retrieve
-                
-                # the gradients of the trainable variables with respect to the loss.
-                # grads = tape.gradient(y_J_test, k_bin_class.trainable_weights)
-                # grads_list.append(grads)
-                for eval_metric in train_metrics:
-                    if eval_metric.expected_input == "pred_and_true":
-                        eval_metric.update_state(y_batch_train, tf.round(self.model(x_batch_train, training=True)))
-                    elif eval_metric.expected_input == "loss":
-                        eval_metric.update_state(loss_value)
-                
-                # debugging only - add metric scores before first update
-                if epoch == 0 and step==0:
-                    epoch_train_metrics_results.append(
-                    [(eval_metric.name, eval_metric.result().numpy()) for eval_metric in train_metrics]
-                    )  
-
-
-                grads = tape.gradient(loss_value, self.model.trainable_weights)
-
-                # TODO grads list
-                # grads_list.append(grads)
-                # Until here, seems to work fine.
-                
-                
-                # Run one step of gradient descent by updating
-                # the value of the variables to minimize the loss.
-                # print(k_bin_class.trainable_weights)
-                # print(grads)
-                
-
-                self.optimizer.apply_gradients(zip(grads, self.model.trainable_weights))
-                # print(k_bin_class.trainable_weights)
-                # raise Exception
-                # TODO trainable weights list
-                # trainable_weights_list.append(k_bin_class.trainable_weights)
-            
-                # Log every 200 batches.
-                if step % 100 == 0:
-                    print(
-                        "Training loss (for one batch) at step %d: %.4f"
-                        % (step, float(loss_value))
-                    )
-                    # TODO: instead of 64 use batch size
-                    print("Seen so far: %s samples" % ((step + 1) * 64))
-
-            # Epoch stats
-            epoch_train_metrics_results.append(
-                [(eval_metric.name, eval_metric.result().numpy()) for eval_metric in train_metrics]
-            )
-
-            # reset metrics
-            for eval_metric in train_metrics:
-                eval_metric.reset_state()
-            
-        
-        self.epoch_train_metrics_results = epoch_train_metrics_results
-        
         return None
 
 
-    def train_debug(self, train_dataset, num_epochs, batch_1_size,
-              train_metrics : list=[]):
-        """Training loop.
-    
-        Parameters:
-
-        train_dataset :: BatchDataSet
-        Must include predicates evaluated, x, y values.
-    
-        ...
-        """
-        assert self.optimizer, "No optimizer specified."
-        gradient_list = []
-        epoch_train_metrics_results = []
-        model_weight_list = []
-
-        model_weight_list.append((-1,[r.numpy() for r in self.model.trainable_weights]))
-
-        for epoch in range(num_epochs):
-            print("\nStart of epoch %d" % (epoch,))   
-
-
-            # Iterate over the batches of the dataset.
-            for step, (pred_batch, x_batch_train, y_batch_train) in enumerate(train_dataset):
-                # J = np.random(B)
-                # J' = np.random(B')
-                
-                x_J = x_batch_train[:batch_1_size]
-                x_J_prime = x_batch_train[batch_1_size:]
-                y_J_true = y_batch_train[:batch_1_size]
-                y_J_prime_true = y_batch_train[batch_1_size:]
-                
-                # Dirty solution -> one type for every tensor in advance
-                y_J_prime_true = tf.cast(y_J_prime_true, tf.float32)
-                y_J_prime_true = tf.expand_dims(y_J_prime_true, axis=1)
-                
-                
-                pred_J = pred_batch[:batch_1_size]
-                pred_J_prime = pred_batch[batch_1_size:]
-                
-                
-                
-                y_J_prime_pred = self.model(x_J_prime)
-                # Open a GradientTape to record the operations run
-                # during the forward pass, which enables auto-differentiation.
-                with tf.GradientTape() as tape:
-                    
-                    # Run the forward pass of the layer.
-                    # The operations that the layer applies
-                    # to its inputs are going to be recorded
-                    # on the GradientTape.
-                    
-                    y_J_pred = self.model(x_J, training=True)  # Logits for J batch recorded on gradient tape
-                    # tape.watch(y_J_pred)
-                    # y_J_test = k_bin_class(x_J, training=True)  # Logits for J batch recorded on gradient tape
-                    # y_pred = tf.concat([y_J_pred, y_J_prime_pred], axis=0)  # not sure if needed
-                    
-                    y_J_pred = tf.broadcast_to(y_J_pred, shape=[y_J_pred.shape[0], pred_J.shape[1]])
-                    
-                    # Compute the loss value for this minibatch.
-                    v = tf.reduce_mean(pred_J * y_J_pred, axis=0, keepdims=True)
-
-                    v_prime_inter = tf.broadcast_to(y_J_prime_pred - y_J_prime_true, 
-                                                    shape=[y_J_prime_true.shape[0], pred_J_prime.shape[1]])
-
-                    v_prime = tf.reduce_mean(pred_J_prime * v_prime_inter, axis=0, keepdims=True)
-                    
-                    
-                    v_prime_times_weight_matrix = tf.matmul(self.m_inner_prod, tf.transpose(v_prime))
-
-                    loss_value = tf.multiply(tf.Variable(2, dtype=tf.float32),
-                                            tf.tensordot(v, tf.matmul(self.m_inner_prod, tf.transpose(v_prime)), axes=1))
-                    
-                watched_vars = tape.watched_variables()
-                # Use the gradient tape to automatically retrieve
-                
-                # the gradients of the trainable variables with respect to the loss.
-                # grads = tape.gradient(y_J_test, k_bin_class.trainable_weights)
-                # grads_list.append(grads)
-                for eval_metric in train_metrics:
-                    if eval_metric.expected_input == "pred_and_true":
-                        eval_metric.update_state(y_batch_train, tf.round(self.model(x_batch_train, training=True)))
-                    elif eval_metric.expected_input == "loss":
-                        eval_metric.update_state(loss_value)
-                
-                # debugging only - add metric scores before first update
-                if epoch == 0 and step==0:
-                    epoch_train_metrics_results.append(
-                    [(eval_metric.name, eval_metric.result().numpy()) for eval_metric in train_metrics]
-                    )  
-
-
-                grads = tape.gradient(loss_value, self.model.trainable_weights)
-                gradient_list.append(((epoch, step), grads))
-            
-                self.optimizer.apply_gradients(zip(grads, self.model.trainable_weights))
-                
-                model_weight_list.append(((epoch, step), [r.numpy() for r in self.model.trainable_weights]))
-                
-            
-                # Log every 200 batches.
-                if step % 100 == 0:
-                    print(
-                        "Training loss (for one batch) at step %d: %.4f"
-                        % (step, float(loss_value))
-                    )
-                    # TODO: instead of 64 use batch size
-                    print("Seen so far: %s samples" % ((step + 1) * 64))
-
-            # Epoch stats
-            epoch_train_metrics_results.append(
-                [(eval_metric.name, eval_metric.result().numpy()) for eval_metric in train_metrics]
-            )
-
-            # reset metrics
-            for eval_metric in train_metrics:
-                eval_metric.reset_state()
-            
-        
-        self.epoch_train_metrics_results = epoch_train_metrics_results
-        self.gradient_list = gradient_list
-        self.model_weight_list = model_weight_list
-        
-        return None
-
-
-    def train_correct(self, train_dataset, num_epochs, train_metrics : list=[]):
-        """Training loop.
+    def train(self, train_dataset, num_epochs, train_metrics=[], verbose=True):
+        """Training loop for custom training with LUSI loss.
     
         Parameters:
 
         train_dataset :: zipped BatchDataSet
-        Must include predicates evaluated, x, y values.
-    
-        ...
+            train_dataset consists of 2 zipped datasets. Each of the 2
+            datasets in the zip object must consist of the following triple
+                (phi_evaluated, x, y).
+            Use the Periphery.generate_batch_data method from
+            lusi_periphery.py to obtain correct structure.
+        
+        num_epochs :: int
+            Number of epochs to train.
+        
+        train_metrics :: list[metrics]
+            A list of metrics to evaluate progress on. These metrics should
+            be tf.keras.metrics instances which have been processed by the
+            modify_metric function defined in this script.
         """
 
-
-        assert self.optimizer, "No optimizer specified."
-
-        gradient_list = []
-        epoch_train_metrics_results = []
-        model_weight_list = []
-
-        # model_weight_list.append((-1,[r.numpy() for r in self.model.trainable_weights]))
-        model_weight_list.append((-1, self.layers[0].get_weights()))
+        if not self.optimizer:
+            raise TypeError("No optimizer specified. \
+                            Please use add_optimizer to add optimizer.")
+        
+        if verbose:
+            gradient_list = []
+            epoch_train_metrics_results = []
+            model_weight_list = []
+            model_weight_list.append((-1, self.layers[0].get_weights()))
+        
+        
         
         for epoch in range(num_epochs):
-            print("\nStart of epoch %d" % (epoch,))   
+            if verbose:
+                print("\nStart of epoch %d" % (epoch,))   
 
 
             # Iterate over the batches of the dataset.
@@ -410,14 +112,11 @@ class LusiModel(tf.keras.Model):
                     in enumerate(train_dataset):
                 
                 
-                # need total batch for evaluation and calc of
-                # 'true' loss.
-
+                # need total batch for evaluation and calc of 'true' loss.
                 x_total = tf.concat([x_batch_1, x_batch_2], axis=0)
-                
                 pred_total = tf.concat([pred_batch_1, pred_batch_2], axis=0)
                 
-                # y tensors must be of dim n x 1
+                # y tensors must be of dim nx1
                 y_batch_1 = tf.cast(y_batch_1, tf.float32)
                 y_batch_1= tf.expand_dims(y_batch_1, axis=1)
                 y_batch_2 = tf.cast(y_batch_2, tf.float32)
@@ -425,40 +124,43 @@ class LusiModel(tf.keras.Model):
                 y_total = tf.concat([y_batch_1, y_batch_2], axis=0)
                 
                 # Predictions on 2nd batch. This calc should not be recorded
-                # on gradient tape
+                # on gradient tape s.t. values are treated as constants during
+                # automatic differentiation.
                 y_batch_2_pred = self.model(x_batch_2)
 
                 # broadcasting difference with actual labels to shape which
-                # is compatible for multiplication with predicates
+                # is compatible for Hadamard product with predicates.
                 # result: d identical columns where d = no. of predicates.
-                # v_prime_inter = tf.broadcast_to(y_batch_2_pred - y_batch_2,
-                #                                 shape=[y_batch_2.shape[0],
-                #                                 pred_batch_2.shape[1]])
+                v_prime_inter = tf.broadcast_to(y_batch_2_pred - y_batch_2,
+                                                shape=[y_batch_2.shape[0],
+                                                pred_batch_2.shape[1]])
 
                 # Open a GradientTape to record the operations run
                 # during the forward pass, which enables auto-differentiation.
                 with tf.GradientTape() as tape:
 
                     # Logits for batch J recorded on gradient tape 
-                    y_batch_1_pred = self.model(x_batch_1, training=True)
+                    y_batch_1_pred = self.model(x_batch_1)
 
                     # prepare for multipication with predicate evaluations
                     # result: d identical columns where d = no. of predicates.
                     y_batch_1_pred_broad = tf.broadcast_to(y_batch_1_pred,
-                        shape=[y_batch_1_pred.shape[0], pred_batch_1.shape[1]])
+                        shape=[y_batch_1_pred.shape[0],
+                               pred_batch_1.shape[1]])
                     
                     # Compute the loss value to be differentiated for batch.
-                    v = tf.reduce_mean(pred_batch_1 * y_batch_1_pred_broad, axis=0, keepdims=True)
+                    v = tf.reduce_mean(pred_batch_1 * y_batch_1_pred_broad,
+                                       axis=0, keepdims=True)
 
-                    v_prime_inter = tf.broadcast_to(y_batch_2_pred - y_batch_2, 
-                                                    shape=[y_batch_2.shape[0],
-                                                    pred_batch_2.shape[1]])
+                    # v_prime_inter = tf.broadcast_to(y_batch_2_pred - y_batch_2, 
+                    #                                 shape=[y_batch_2.shape[0],
+                    #                                 pred_batch_2.shape[1]])
 
                     v_prime = tf.reduce_mean(pred_batch_2 * v_prime_inter,
                                             axis=0, keepdims=True)
                     
-                    
-                    # v_prime_times_weight_matrix = tf.matmul(self.m_inner_prod, tf.transpose(v_prime))
+                    # v_prime_times_weight_matrix = tf.matmul(self.m_inner_prod,
+                    #                                   tf.transpose(v_prime))
 
                     loss_value = tf.multiply(tf.Variable(2, dtype=tf.float32),
                                     tf.tensordot(v,
@@ -466,12 +168,13 @@ class LusiModel(tf.keras.Model):
                                             tf.transpose(v_prime)), axes=1))
 
                 
-                y_pred_total = tf.concat([y_batch_1_pred, y_batch_2_pred], axis=0)
-                
+                y_pred_total = tf.concat([y_batch_1_pred, y_batch_2_pred],
+                                         axis=0)
                 
                 y_pred_total_inter = tf.broadcast_to(y_total - y_pred_total,
                                         shape=[y_pred_total.shape[0],
-                                            pred_total.shape[1]]) 
+                                            pred_total.shape[1]])
+
                 v_actual_loss = tf.reduce_mean(pred_total * \
                                                y_pred_total_inter,
                                                axis=0, keepdims=True)
@@ -479,57 +182,54 @@ class LusiModel(tf.keras.Model):
                 actual_loss = tf.multiply(tf.Variable(2, dtype=tf.float32),
                                   tf.tensordot(v_actual_loss,
                                       tf.matmul(self.m_inner_prod,
-                                          tf.transpose(v_actual_loss)), axes=1))
-                print(f"The actual loss is {actual_loss} and the loss for the gradient calc is {loss_value}.")
+                                          tf.transpose(v_actual_loss)),
+                                          axes=1))
+                if verbose:
+                    watched_vars = tape.watched_variables()
                 
-                watched_vars = tape.watched_variables()
+                    for train_metric in train_metrics:
+                        if train_metric.expected_input == "pred_and_true":
+                            train_metric.update_state(y_total, 
+                                tf.round(self.model(x_total)))
+
+                        elif train_metric.expected_input == "loss":
+                            train_metric.update_state(actual_loss)
+                
+                    # debugging only - add metric scores before first update
+                    if epoch == 0 and step==0:
+                        epoch_train_metrics_results.append(
+                        [(train_metric.name, train_metric.result().numpy()) \
+                            for train_metric in train_metrics])  
+                
                 # Use the gradient tape to automatically retrieve
-                # the gradients of the trainable variables with respect to the loss.
-                
-                for eval_metric in train_metrics:
-                    if eval_metric.expected_input == "pred_and_true":
-                        eval_metric.update_state(y_total, tf.round(self.model(x_total, training=True)))
-                    elif eval_metric.expected_input == "loss":
-                        eval_metric.update_state(loss_value)
-                
-                # debugging only - add metric scores before first update
-                if epoch == 0 and step==0:
-                    epoch_train_metrics_results.append(
-                    [(eval_metric.name, eval_metric.result().numpy()) for eval_metric in train_metrics]
-                    )  
-
+                # the gradients of the trainable variables with respect to 
+                # the loss.
                 grads = tape.gradient(loss_value, self.model.trainable_weights)
-                gradient_list.append(((epoch, step), grads))
-            
                 self.optimizer.apply_gradients(zip(grads, self.model.trainable_weights))
-                
-                # model_weight_list.append(((epoch, step), [r.numpy() for r in self.model.trainable_weights]))
-                model_weight_list.append(((epoch, step), self.layers[0].get_weights()))
 
-                # Log every 200 batches.
-                if step % 100 == 0:
-                    print(
-                        "Training loss (for one batch) at step %d: %.4f"
-                        % (step, float(loss_value))
-                    )
-                    # TODO: instead of 64 use batch size
-                    print("Seen so far: %s samples" % ((step + 1) * 64))
+                if verbose:
+                    # storing gradients for further inspection
+                    gradient_list.append(((epoch, step), grads))
+                    
+                    # storing model weights after each update
+                    model_weight_list.append(((epoch, step), self.layers[0].get_weights()))
 
-            # Epoch stats
-            epoch_train_metrics_results.append(
-                [(eval_metric.name, eval_metric.result().numpy()) for eval_metric in train_metrics]
-            )
+            if verbose:
+                # Epoch stats
+                epoch_train_metrics_results.append(
+                    [(eval_metric.name, eval_metric.result().numpy()) \
+                        for eval_metric in train_metrics])
 
-            # reset metrics
-            for eval_metric in train_metrics:
-                eval_metric.reset_state()
+                # reset metrics
+                for eval_metric in train_metrics:
+                    eval_metric.reset_state()
             
-        
-        self.epoch_train_metrics_results = epoch_train_metrics_results
-        self.gradient_list = gradient_list
-        self.model_weight_list = model_weight_list
-        self.watches_vars = watched_vars
-        
+        if verbose: 
+            self.epoch_train_metrics_results = epoch_train_metrics_results
+            self.gradient_list = gradient_list
+            self.model_weight_list = model_weight_list
+            self.watches_vars = watched_vars
+            
         return None
 
 
@@ -796,8 +496,10 @@ def main():
     w_matrix = tf.Variable(np.diag(np.ones(3)), dtype=tf.float32)
     lusi_model = LusiModel(w_matrix)
     lusi_model.add_optimizer(tf.keras.optimizers.SGD())
-    lusi_model.train_correct(train_batch, num_epochs=2)
-
+    res_b_train = lusi_model.evaluate(data.test_data, eval_metrics)
+    lusi_model.train(train_batch, num_epochs=2)
+    res_a_train = lusi_model.evaluate(data.test_data, eval_metrics)
+    
     return None
 
 if __name__ == "__main__":
