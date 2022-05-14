@@ -99,7 +99,11 @@ class LusiModel(tf.keras.Model):
             model_weight_list = []
             model_weight_list.append((-1, self.layers[0].get_weights()))
         
-        
+        # sanity check matrix dims and predicates match
+        if not train_dataset.element_spec[0][0].shape[1] == \
+            self.m_inner_prod.shape[0]:
+                raise ValueError("Check if dims of m_inner_prod and no. of \
+                                 predicates match.")
         
         for epoch in range(num_epochs):
             if verbose:
@@ -361,12 +365,16 @@ def avg_pixel_intensity(img_tensor, batch_mean=False):
     return tf.reduce_mean(img_tensor, axis=[0,1])
 
 
-def symmetry_boxed(imgs):
+def symmetry_boxed(imgs, single=False):
     """Determine symmetry of cropped images.
     
     Assume [0,1]-range for pixels.
     """
-    
+
+    if single:
+        # need (1, rows, cols) arrays for aply_phi function of Periphery class
+        imgs = np.expand_dims(imgs, axis=0)
+
     cropped_imgs = determine_box(imgs)
     sym_scores = np.zeros(len(cropped_imgs))
     
@@ -374,27 +382,6 @@ def symmetry_boxed(imgs):
         sym_scores[j] = symmetry(cropped_imgs[j])
     
     return sym_scores
-
-
-def dot(a, b, W):
-    """Calculate dot product between a, b using W as weight matrix.
-    
-    Parameters:
-
-    a :: tensor of dtype tf.float64
-    transposed vector
-    
-    b :: tensor of dtype tf.float64
-    non-transposed vector
-    
-    W :: tensor of dtype tf.float64
-    matrix.
-
-    Returns:
-    dot product induced by W of vectors a and b.
-    """
-    
-    return tf.tensordot(a, tf.matmul(W, b), 1)  
 
 
 def weighted_pixel_intesity(x):
@@ -421,30 +408,6 @@ def local_pixel_intensity_single(x, patch):
     return tf.reduce_mean(extracted_patch)
 
 
-def apply_predicates_on_data(predicates, x):
-    """ Evaluate predicates on data and store values.
-    
-    predicates :: np.array
-    List of \R valued predicates working on x of dimension d.
-    
-    x :: np.array
-    data to apply predicates to of dimensinos (n, d0, ..., dN).
-    I.e. for MNIST, dims = (n, 28, 28)
-    
-    returns:
-    array of dimensions (n, d).
-    """
-    
-    pred_evals = np.asarray([predicates[i](x[j]) for j in range(x.shape[0]) for i in range(predicates.shape[0])])
-    pred_evals = pred_evals.reshape(x.shape[0], predicates.shape[0])
-    pred_evals = tf.convert_to_tensor(pred_evals, dtype=tf.float32)
-    
-    return pred_evals    
-
-
-local_pixel_intensity_center = functools.partial(local_pixel_intensity_single, patch=((10,20), (10,20)))
-
-
 def modify_metric(metric, tag):
     """Add expected_input attribute to metric object and return it."""
 
@@ -452,10 +415,12 @@ def modify_metric(metric, tag):
     return metric
 
 
+# partial func defs for use with Periphery class
+local_pixel_intensity_center = functools.partial(local_pixel_intensity_single, patch=((10,20), (10,20)))
+symmetry_boxed_single = functools.partial(symmetry_boxed, single=True)
 
 
-
-phi = np.asarray([avg_pixel_intensity, weighted_pixel_intesity, local_pixel_intensity_center])
+phi = np.asarray([avg_pixel_intensity, weighted_pixel_intesity, local_pixel_intensity_center, symmetry_boxed_single])
 # Specify some evaluation metrics for custom model
 eval_metrics = [modify_metric(tf.keras.metrics.BinaryAccuracy(name="Binary Accuracy"), "pred_and_true"), 
                 modify_metric(tf.keras.metrics.FalsePositives(name="False Positives"), "pred_and_true"), 
@@ -493,7 +458,7 @@ def main():
     train_batch, test_batch = data.generate_batch_data(54,32)
      
     # create model
-    w_matrix = tf.Variable(np.diag(np.ones(3)), dtype=tf.float32)
+    w_matrix = tf.Variable(np.diag(np.ones(4)), dtype=tf.float32)
     lusi_model = LusiModel(w_matrix)
     lusi_model.add_optimizer(tf.keras.optimizers.SGD())
     res_b_train = lusi_model.evaluate(data.test_data, eval_metrics)
