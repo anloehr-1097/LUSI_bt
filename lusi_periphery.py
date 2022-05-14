@@ -260,7 +260,7 @@ def get_data_excerpt(data, balanced=False, size_of_excerpt=0.5):
         return (x[permute],y[permute])
     
     else:
-        ind= np.random.random_integers(low=0, high=data[0].shape[0],
+        ind= np.random.randint(low=0, high=data[0].shape[0],
                                        size=size_of_excerpt)
         x = data[0][ind]
         y = data[1][ind]

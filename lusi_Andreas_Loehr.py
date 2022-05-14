@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd 
 import functools
 from  pprint import pprint
+from scipy import ndimage as ndimage
 import lusi_periphery
 
 
@@ -281,7 +282,292 @@ class LusiModel(tf.keras.Model):
         return [(eval_metric.name, eval_metric.result()) for eval_metric in eval_metrics]
         
 
+class LusiErm(tf.keras.Model):
+    """Given a model, e.g. neural net, implement the LUSI-ERM approach.
+    
+    Note: This code has only been tested with neural nets defined via
+          keras API.
+    """
+    
+    def __init__(self, m_inner_prod, alpha=0.5, model=None, erm_loss= None,
+                 tau=None) -> None:
+        """Instatiate model with custom training loop adapted to LUSI method.
 
+        Parameters:
+
+        m_inner_prod :: tf.Variable with appropriate dims, format tf.float32.
+            Matrix used for custom inner product in Lusi Loss ('M' in paper).
+
+        model :: tensorflow model | None.
+            Underlying model to be used to make predictions.
+            If no model is passed, use simple neural net as default.
+
+        tau :: np.ndarray of functions | None.
+            Predicates of the form f : \mathcal{Y} -> \R.
+            See paper section 'factorizing predicates'.
+        """
+        
+        super().__init__()  # This may not be necessary and cause problems.
+        
+        if not model:
+            # if no model given, use this small neural net as default.
+            self.model = keras.Sequential(
+                [layers.Flatten(input_shape=(28,28)),
+                 layers.Dense(100, activation="relu", name="hidden_layer_01"),
+                 layers.Dense(1, name="output_layer", activation="sigmoid") # interpret output as prob. for class 1
+                ]
+            )
+        else:
+            self.model = model
+        
+        if not erm_loss:
+            self.erm_loss = tf.keras.losses.BinaryCrossentropy()
+        else:
+            self.erm_loss = erm_loss
+
+        self.m_inner_prod = m_inner_prod
+        self.tau = tau
+        self.alpha = alpha
+        
+        return None
+
+
+    def summary(self):
+        """Display model summary."""
+
+        return self.model.summary()
+    
+    def add_optimizer(self, optimizer) -> None:
+        """Add tf optimizer to use."""
+
+        self.optimizer = optimizer
+
+        return None
+    
+    def add_loss(self, loss) -> None:
+        """Add an erm-loss function/object."""
+        
+        self.erm_loss = loss
+        
+        return None
+
+
+    def train(self, train_dataset, num_epochs, train_metrics=[], verbose=True):
+        """Training loop for custom training with LUSI loss.
+    
+        Parameters:
+
+        train_dataset :: zipped BatchDataSet
+            train_dataset consists of 2 zipped datasets. Each of the 2
+            datasets in the zip object must consist of the following triple
+                (phi_evaluated, x, y).
+            Use the Periphery.generate_batch_data method from
+            lusi_periphery.py to obtain correct structure.
+        
+        num_epochs :: int
+            Number of epochs to train.
+        
+        train_metrics :: list[metrics]
+            A list of metrics to evaluate progress on. These metrics should
+            be tf.keras.metrics instances which have been processed by the
+            modify_metric function defined in this script.
+        """
+
+        if not self.optimizer:
+            raise TypeError("No optimizer specified. \
+                            Please use add_optimizer to add optimizer.")
+        
+        if verbose:
+            gradient_list = []
+            epoch_train_metrics_results = []
+            model_weight_list = []
+            model_weight_list.append((-1, self.layers[0].get_weights()))
+        
+        # sanity check matrix dims and predicates match
+        if not train_dataset.element_spec[0][0].shape[1] == \
+            self.m_inner_prod.shape[0]:
+                raise ValueError("Check if dims of m_inner_prod and no. of \
+                                 predicates match.")
+        
+        for epoch in range(num_epochs):
+            if verbose:
+                print("\nStart of epoch %d" % (epoch,))   
+
+
+            # Iterate over the batches of the dataset.
+            for step, ((pred_batch_1, x_batch_1, y_batch_1), 
+                (pred_batch_2, x_batch_2, y_batch_2))  \
+                    in enumerate(train_dataset):
+                
+                
+                # need total batch for evaluation and calc of 'true' loss.
+                x_total = tf.concat([x_batch_1, x_batch_2], axis=0)
+                pred_total = tf.concat([pred_batch_1, pred_batch_2], axis=0)
+                
+                # y tensors must be of dim nx1
+                y_batch_1 = tf.cast(y_batch_1, tf.float32)
+                y_batch_1= tf.expand_dims(y_batch_1, axis=1)
+                y_batch_2 = tf.cast(y_batch_2, tf.float32)
+                y_batch_2= tf.expand_dims(y_batch_2, axis=1)
+                y_total = tf.concat([y_batch_1, y_batch_2], axis=0)
+                
+                # Predictions on 2nd batch. This calc should not be recorded
+                # on gradient tape s.t. values are treated as constants during
+                # automatic differentiation.
+                y_batch_2_pred = self.model(x_batch_2)
+
+                # broadcasting difference with actual labels to shape which
+                # is compatible for Hadamard product with predicates.
+                # result: d identical columns where d = no. of predicates.
+                v_prime_inter = tf.broadcast_to(y_batch_2_pred - y_batch_2,
+                                                shape=[y_batch_2.shape[0],
+                                                pred_batch_2.shape[1]])
+
+                # Open a GradientTape to record the operations run
+                # during the forward pass, which enables auto-differentiation.
+                with tf.GradientTape() as tape:
+
+                    # Logits for batch J recorded on gradient tape 
+                    y_batch_1_pred = self.model(x_batch_1)
+
+                    # prepare for multipication with predicate evaluations
+                    # result: d identical columns where d = no. of predicates.
+                    y_batch_1_pred_broad = tf.broadcast_to(y_batch_1_pred,
+                        shape=[y_batch_1_pred.shape[0],
+                               pred_batch_1.shape[1]])
+                    
+                    # Compute the loss value to be differentiated for batch.
+                    v = tf.reduce_mean(pred_batch_1 * y_batch_1_pred_broad,
+                                       axis=0, keepdims=True)
+
+                    # v_prime_inter = tf.broadcast_to(y_batch_2_pred - y_batch_2, 
+                    #                                 shape=[y_batch_2.shape[0],
+                    #                                 pred_batch_2.shape[1]])
+
+                    v_prime = tf.reduce_mean(pred_batch_2 * v_prime_inter,
+                                            axis=0, keepdims=True)
+                    
+                    # v_prime_times_weight_matrix = tf.matmul(self.m_inner_prod,
+                    #                                   tf.transpose(v_prime))
+
+                    loss_value = tf.multiply(tf.Variable(2, dtype=tf.float32),
+                                    tf.tensordot(v,
+                                        tf.matmul(self.m_inner_prod,
+                                            tf.transpose(v_prime)), axes=1))
+
+                    # need to calc again
+                    # y_pred_total = tf.concat([y_batch_1_pred, y_batch_2_pred],
+                    #                         axis=0)
+                    y_pred_total = self.model(x_total)
+
+                    erm_plus_lusi = self.alpha * self.erm_loss(y_total, y_pred_total) + \
+                        (1 - self.alpha) * loss_value
+                
+
+                y_pred_total_inter = tf.broadcast_to(y_total - y_pred_total,
+                                        shape=[y_pred_total.shape[0],
+                                            pred_total.shape[1]])
+
+                v_actual_loss = tf.reduce_mean(pred_total * \
+                                               y_pred_total_inter,
+                                               axis=0, keepdims=True)
+
+                actual_loss = tf.multiply(tf.Variable(2, dtype=tf.float32),
+                                  tf.tensordot(v_actual_loss,
+                                      tf.matmul(self.m_inner_prod,
+                                          tf.transpose(v_actual_loss)),
+                                          axes=1))
+                if verbose:
+                    watched_vars = tape.watched_variables()
+                
+                    for train_metric in train_metrics:
+                        if train_metric.expected_input == "pred_and_true":
+                            train_metric.update_state(y_total, 
+                                tf.round(self.model(x_total)))
+
+                        elif train_metric.expected_input == "loss":
+                            train_metric.update_state(actual_loss)
+                
+                    # debugging only - add metric scores before first update
+                    if epoch == 0 and step==0:
+                        epoch_train_metrics_results.append(
+                        [(train_metric.name, train_metric.result().numpy()) \
+                            for train_metric in train_metrics])  
+                
+                # Use the gradient tape to automatically retrieve
+                # the gradients of the trainable variables with respect to 
+                # the loss.
+                grads = tape.gradient(erm_plus_lusi, self.model.trainable_weights)
+                self.optimizer.apply_gradients(zip(grads, self.model.trainable_weights))
+
+                if verbose:
+                    # storing gradients for further inspection
+                    gradient_list.append(((epoch, step), grads))
+                    
+                    # storing model weights after each update
+                    model_weight_list.append(((epoch, step), self.layers[0].get_weights()))
+
+            if verbose:
+                # Epoch stats
+                epoch_train_metrics_results.append(
+                    [(eval_metric.name, eval_metric.result().numpy()) \
+                        for eval_metric in train_metrics])
+
+                # reset metrics
+                for eval_metric in train_metrics:
+                    eval_metric.reset_state()
+            
+        if verbose: 
+            self.epoch_train_metrics_results = epoch_train_metrics_results
+            self.gradient_list = gradient_list
+            self.model_weight_list = model_weight_list
+            self.watches_vars = watched_vars
+            
+        return None
+
+
+    def predict(self, x):
+        """Predict outputs given inputs x."""
+
+        return self.model(x)
+
+    
+    def evaluate(self, test_dataset, eval_metrics, training=False):
+        """Evaluate model on test dataset given eval_metrics.
+        
+        Parameters:
+
+        test_dataset :: tf batched dataset or tuple of np.ndarrays
+        eval_metrics :: list of tf metrics proccessed by 'modify_metric'.        
+        
+        Returns:
+        List of results from evaluation metrics calculated over test_dataset.
+        """
+        
+        if not ((isinstance(test_dataset, tuple) and isinstance(
+            test_dataset[0], np.ndarray)) or isinstance(test_dataset,
+            tf.data.Dataset)):
+            raise TypeError("Pass tf. Dataset or tuple of np.ndarrays")
+        
+        for eval_metric in eval_metrics:
+                eval_metric.reset_state()
+        
+        if isinstance(test_dataset, tf.data.Dataset):
+
+            for _, (pred_batch_test, x_batch_test, y_batch_test) in enumerate(test_dataset):
+            
+                for eval_metric in eval_metrics:
+                    eval_metric.update_state(y_batch_test, tf.round(self.model(x_batch_test)))
+        
+            return [(eval_metric.name, eval_metric.result()) for eval_metric in eval_metrics]
+
+        # tuple of numpy.ndarrays
+        y_pred = self.predict(test_dataset[0])
+
+        for eval_metric in eval_metrics:
+            eval_metric.update_state(test_dataset[1], tf.round(y_pred))
+                
+        return [(eval_metric.name, eval_metric.result()) for eval_metric in eval_metrics]
 
 
 
@@ -291,7 +577,10 @@ def symmetry(imgs, axis="both"):
     Parameters:
     img :: np.array
         Numpy array representing images. Pixel values in range [0,1]
-    
+    axis :: string, one of "vertical", "horizontal, "both"
+        String indicating which axes to consider when calculating symmetries.
+
+
     Returns:
     sym_score :: float 
         Value representing symmetry - score between 0 (not symmetric) and 1 (symmetric).
@@ -365,7 +654,7 @@ def avg_pixel_intensity(img_tensor, batch_mean=False):
     return tf.reduce_mean(img_tensor, axis=[0,1])
 
 
-def symmetry_boxed(imgs, single=False):
+def symmetry_boxed(imgs, axis="both", single=False):
     """Determine symmetry of cropped images.
     
     Assume [0,1]-range for pixels.
@@ -379,7 +668,7 @@ def symmetry_boxed(imgs, single=False):
     sym_scores = np.zeros(len(cropped_imgs))
     
     for j in range(len(imgs)):
-        sym_scores[j] = symmetry(cropped_imgs[j])
+        sym_scores[j] = symmetry(cropped_imgs[j], axis)
     
     return sym_scores
 
@@ -408,6 +697,57 @@ def local_pixel_intensity_single(x, patch):
     return tf.reduce_mean(extracted_patch)
 
 
+def determine_holes(img, thresh=0.15):
+    """Determine number of holes in image.
+    
+    img :: np.ndarray
+        Mnist image.
+
+    thresh :: float
+        Threshhold value above which to set pixel values to 1 in binary image.
+    """
+
+    img_bin = img > thresh
+    img_dil = ndimage.binary_dilation(img_bin)
+    
+    img_hole_diff = ndimage.binary_fill_holes(img_dil).astype(int) - img_dil.astype(int)
+    img_hole_diff_alt = ndimage.binary_fill_holes(img_bin).astype(int) - img_bin.astype(int)
+    
+    
+    img_hole_diff_ind = list(np.where(img_hole_diff > 0))
+    img_hole_diff_alt_ind = list(np.where(img_hole_diff_alt > 0))
+    
+    img_hole_coord = list(zip(img_hole_diff_ind[0], img_hole_diff_ind[1]))
+    img_hole_coord = [np.asarray(c) for c in img_hole_coord]
+    
+    img_hole_coord_alt = list(zip(img_hole_diff_alt_ind[0], img_hole_diff_alt_ind[1]))
+    img_hole_coord_alt = [np.asarray(c) for c in img_hole_coord_alt]
+    
+    img_hole_count = 0
+    img_hole_count_alt = 0
+    
+    for i in range(len(img_hole_coord) - 1):
+        if i == 0: img_hole_count += 1
+        
+        e1 = img_hole_coord[i]
+        e2 = img_hole_coord[i+1]
+
+        if (abs(e2[0] - e1[0]) > 1) or ((abs(e2[0]- e1[0]) > 1) and (abs(e2[1] - e1[1]) > 1)):
+            img_hole_count += 1
+    
+    for i in range(len(img_hole_coord_alt) - 1):
+        if i == 0: img_hole_count_alt += 1
+
+        e1 = img_hole_coord_alt[i]
+        e2 = img_hole_coord_alt[i+1]
+
+        if (abs(e2[0] - e1[0]) > 1) or ((abs(e2[0]- e1[0]) > 1) and (abs(e2[1] - e1[1]) > 1)):
+            img_hole_count_alt += 1
+            
+    return (img_hole_count + img_hole_count_alt)//2
+
+
+
 def modify_metric(metric, tag):
     """Add expected_input attribute to metric object and return it."""
 
@@ -417,10 +757,29 @@ def modify_metric(metric, tag):
 
 # partial func defs for use with Periphery class
 local_pixel_intensity_center = functools.partial(local_pixel_intensity_single, patch=((10,20), (10,20)))
-symmetry_boxed_single = functools.partial(symmetry_boxed, single=True)
+local_pixel_intensity_ul = functools.partial(local_pixel_intensity_single, patch=((0,10), (0,10)))
+local_pixel_intensity_ur = functools.partial(local_pixel_intensity_single, patch=((18,28), (0,10)))
+local_pixel_intensity_ll = functools.partial(local_pixel_intensity_single, patch=((0,10), (18,28)))
+local_pixel_intensity_lr = functools.partial(local_pixel_intensity_single, patch=((18,28), (18,28)))
+symmetry_boxed_both_single = functools.partial(symmetry_boxed, single=True)
+symmetry_boxed_vert_single = functools.partial(symmetry_boxed, axis="vertical", single=True)
+symmetry_boxed_hor_single = functools.partial(symmetry_boxed, axis="horizontal", single=True)
+determine_holes_15 = functools.partial(determine_holes, thresh=0.15)
 
-
-phi = np.asarray([avg_pixel_intensity, weighted_pixel_intesity, local_pixel_intensity_center, symmetry_boxed_single])
+phi = np.asarray(
+    [avg_pixel_intensity,
+    weighted_pixel_intesity,
+    local_pixel_intensity_center,
+    local_pixel_intensity_ll,
+    local_pixel_intensity_ul,
+    local_pixel_intensity_lr,
+    local_pixel_intensity_ur,
+    symmetry_boxed_both_single,
+    symmetry_boxed_vert_single,
+    symmetry_boxed_hor_single,
+    determine_holes_15
+    ]
+    )
 # Specify some evaluation metrics for custom model
 eval_metrics = [modify_metric(tf.keras.metrics.BinaryAccuracy(name="Binary Accuracy"), "pred_and_true"), 
                 modify_metric(tf.keras.metrics.FalsePositives(name="False Positives"), "pred_and_true"), 
@@ -454,16 +813,56 @@ def main():
     x_test = np.concatenate([eights_test, sevens_test])
     y_test = np.concatenate([y_eights_test, y_sevens_test])
 
-    data = lusi_periphery.Periphery((x_train, y_train), (x_test, y_test), phi)
-    train_batch, test_batch = data.generate_batch_data(54,32)
+    # data = lusi_periphery.Periphery((x_train, y_train), (x_test, y_test), phi)
+    data = lusi_periphery.Periphery(lusi_periphery.get_data_excerpt((x_train, y_train), size_of_excerpt=0.053),
+        (x_test, y_test), phi)
+    train_batch, test_batch = data.generate_batch_data(64,64)
      
-    # create model
-    w_matrix = tf.Variable(np.diag(np.ones(4)), dtype=tf.float32)
+    
+    # create lusi model
+    w_matrix = tf.Variable(np.diag(np.ones(11)), dtype=tf.float32)
     lusi_model = LusiModel(w_matrix)
     lusi_model.add_optimizer(tf.keras.optimizers.SGD())
     res_b_train = lusi_model.evaluate(data.test_data, eval_metrics)
-    lusi_model.train(train_batch, num_epochs=2)
+    lusi_model.train(train_batch, num_epochs=10)
     res_a_train = lusi_model.evaluate(data.test_data, eval_metrics)
+    
+    # create lusi-erm model, 0.8 weighting for erm, 0.2 for LUSI
+    lusi_erm = LusiErm(w_matrix, alpha=0.8)
+    lusi_erm.add_optimizer(tf.keras.optimizers.SGD())
+    res_b_train_lusi_erm = lusi_erm.evaluate(data.test_data, eval_metrics)
+    lusi_erm.train(train_batch, num_epochs=10)
+    res_a_train_lusi_erm = lusi_erm.evaluate(data.test_data, eval_metrics)
+
+    # create baseline model
+    baseline_bin_class = keras.Sequential(
+    [
+    layers.Flatten(input_shape=(28,28)),
+    # layers.Dense(100, activation="relu", name="hidden_layer_1"),
+    layers.Dense(500, activation="relu", name="hidden_layer_2"),
+    layers.Dense(1, activation="sigmoid", name="output_layer") # interpret output as prob. for class 1
+    # layers.Dense(1, name="output_layer", activation="relu")
+    ])
+    
+    baseline_bin_class.compile(
+    optimizer=keras.optimizers.SGD(),
+    # loss=keras.losses.SparseCategoricalCrossentropy(),
+    # loss=keras.losses.binary_crossentropy(),
+    loss = keras.losses.BinaryCrossentropy(),
+    metrics=[keras.metrics.BinaryAccuracy(), "accuracy"]
+    )
+
+    res_b_train_base = baseline_bin_class.evaluate(x_test, y_test,
+        batch_size=x_test.shape[0])
+
+    baseline_bin_class.fit(data.train_data_x, data.train_data_y, batch_size=64, epochs=10)
+    
+    res_a_train_base = baseline_bin_class.evaluate(x_test, y_test,
+    batch_size=x_test.shape[0])
+    perf_summary = {
+        "LUSI": (res_b_train, res_a_train),
+        "ERM" : (res_b_train_base, res_a_train_base),
+        "LUSI-ERM" : (res_b_train_lusi_erm, res_a_train_lusi_erm)}
     
     return None
 
