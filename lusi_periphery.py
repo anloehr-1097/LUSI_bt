@@ -1,6 +1,8 @@
 import tensorflow as tf
 import numpy as np
 import functools
+import matplotlib.pyplot as plt
+from primefac import primefac
 
 class Periphery:
     def __init__(self, train_data=None, test_data=None, phi=np.array([]), batch_size_1=32, batch_size_2=32) -> None:
@@ -199,12 +201,11 @@ class Periphery:
 
 
 def get_data_excerpt(data, balanced=False, size_of_excerpt=0.5):
-    """
+    """Get portion of passed data.
     
     This method is assuming a more or less balanced dataset to start with.
 
     Parameters:
-
     data :: tuple of np.ndarrays
         Consists of ndarrays for x and y.
         Assumes y made up of 2 classes.
@@ -267,18 +268,42 @@ def get_data_excerpt(data, balanced=False, size_of_excerpt=0.5):
         return (x[permute],y[permute])
 
 
+def visual_validation(n, data):
+    """Plot n samples with their predicitions against true labels.
+    
+    n :: int
+        Number of samples to be plotted.
+    
+    data :: tuple of form (x, y, y_pred)
+        Tuple should consist of np.ndarrays for x, y, and model predictions.
 
+    """
 
-# def visual_validation(n):
-#     random_indices = np.random.randint(0, high=x_test.shape[0], size=20).reshape(5,4)
-#     fig, ax = plt.subplots(nrows=5, ncols=4, figsize=(10,10))
-#     fig.figsize=(10,10)
+    # determine prime factors of n to calc. no. of rows and cols
+    pfs = list(primefac(n))
+    three_quart = np.floor(len(pfs) * 0.75).astype(int)
+    rowcount = np.prod(pfs[: three_quart])
+    colcount = np.prod(pfs[three_quart : ])
 
-#     for i in range(5):
-#         for j in range(4):
-#             ax[i,j].imshow(x_test[random_indices[i,j]])
-#             ax[i,j].set_title(f"pred: {lusi_net_test_pred[random_indices[i,j]][0]}, true: {y_test[random_indices[i,j]]}")
-#             ax[i,j].axis("off")
-
+    # select n datapoints from data, bring into grid shape for easy handling
+    random_indices = np.random.randint(0, high=data[0].shape[0], size=n)
+    random_indices = np.reshape(random_indices, (rowcount, colcount))
+    
+    # determine size of figure dynamically
+    size = np.max([colcount, rowcount]) * 3
+    fig, ax = plt.subplots(nrows=rowcount, ncols=colcount, figsize=(size, size))
+    
+    # populate grid with images + labels
+    for i in range(rowcount):
+        for j in range(colcount):
+            ax[i,j].imshow(data[0][random_indices[i,j]])
+            ax[i,j].set_title("pred: ({:.2f} -> {:.0f}),  true: {:.0f}".format( \
+                data[2][random_indices[i,j]][0],
+                np.round(data[2][random_indices[i,j]][0]),
+                data[1][random_indices[i,j]]))
+            # ax[i,j].set_title(f"pred: {data[2][random_indices[i,j]][0]}, true: {data[1][random_indices[i,j]]}")
+            ax[i,j].axis("off")
+    
+    return None
 
 
