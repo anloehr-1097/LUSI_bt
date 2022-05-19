@@ -46,7 +46,7 @@ class LusiModel(tf.keras.Model):
                  layers.Dense(100, activation="relu", name="hidden_layer_01"),
                  layers.Dense(1, name="output_layer", activation="sigmoid") # interpret output as prob. for class 1
                 ]
-            )
+                )
         else:
             self.model = model
 
@@ -644,7 +644,7 @@ def avg_pixel_intensity(img_tensor, batch_mean=False):
     
     Parameters:
     img_tensor :: array of 3 dim, pixel value between 0 and 1.
-    Dimensions = (batch_size, width, height)
+        Dimensions = (batch_size, width, height)
     """
 
     if batch_mean: 
@@ -674,6 +674,13 @@ def symmetry_boxed(imgs, axis="both", single=False):
 
 
 def weighted_pixel_intesity(x):
+    """Determine weighted pixel intesity of image.
+    
+    Parameters:
+
+    x :: np.ndarray
+        Image of size 28x28 as in MNIST.
+    """
     row_mean = tf.reduce_mean(x, axis=1)
     weights = np.concatenate([np.arange(1,15), np.arange(14, 0, -1)])
     weighted_intesity = row_mean * weights
@@ -686,14 +693,15 @@ def local_pixel_intensity_single(x, patch):
     """Calc. avg. pixel intensity on local patch of image.
 
     x :: np.array
-    dims = (28, 28).
+        dims = (28, 28).
 
     patch :: tuple[tuple]
-    coordinates for patch. Tuple structure as follows: ((x_dim_0, x_dim_1), (y_dim_0, y_dim_1)).
+        coordinates for patch. Tuple structure as follows: 
+        ((x_dim_0, x_dim_1), (y_dim_0, y_dim_1)).
 
     """
 
-    extracted_patch = x[patch[0][0]:patch[0][1], patch[1][0]: patch[1][1]]
+    extracted_patch = x[patch[0][0]:patch[0][1], patch[1][0]:patch[1][1]]
     return tf.reduce_mean(extracted_patch)
 
 
@@ -747,7 +755,6 @@ def determine_holes(img, thresh=0.15):
     return (img_hole_count + img_hole_count_alt)//2
 
 
-
 def modify_metric(metric, tag):
     """Add expected_input attribute to metric object and return it."""
 
@@ -756,14 +763,29 @@ def modify_metric(metric, tag):
 
 
 # partial func defs for use with Periphery class
-local_pixel_intensity_center = functools.partial(local_pixel_intensity_single, patch=((10,20), (10,20)))
-local_pixel_intensity_ul = functools.partial(local_pixel_intensity_single, patch=((0,10), (0,10)))
-local_pixel_intensity_ur = functools.partial(local_pixel_intensity_single, patch=((18,28), (0,10)))
-local_pixel_intensity_ll = functools.partial(local_pixel_intensity_single, patch=((0,10), (18,28)))
-local_pixel_intensity_lr = functools.partial(local_pixel_intensity_single, patch=((18,28), (18,28)))
+local_pixel_intensity_center = functools.partial(local_pixel_intensity_single,
+                                                 patch=((10,20), (10,20)))
+
+local_pixel_intensity_ul = functools.partial(local_pixel_intensity_single,
+                                             patch=((0,10), (0,10)))
+
+local_pixel_intensity_ur = functools.partial(local_pixel_intensity_single,
+                                             patch=((18,28), (0,10)))
+
+local_pixel_intensity_ll = functools.partial(local_pixel_intensity_single,
+                                             patch=((0,10), (18,28)))
+
+local_pixel_intensity_lr = functools.partial(local_pixel_intensity_single,
+                                             patch=((18,28), (18,28)))
+
 symmetry_boxed_both_single = functools.partial(symmetry_boxed, single=True)
-symmetry_boxed_vert_single = functools.partial(symmetry_boxed, axis="vertical", single=True)
-symmetry_boxed_hor_single = functools.partial(symmetry_boxed, axis="horizontal", single=True)
+
+symmetry_boxed_vert_single = functools.partial(symmetry_boxed,
+                                               axis="vertical", single=True)
+
+symmetry_boxed_hor_single = functools.partial(symmetry_boxed,
+                                              axis="horizontal", single=True)
+
 determine_holes_15 = functools.partial(determine_holes, thresh=0.15)
 
 phi = np.asarray(
@@ -781,14 +803,20 @@ phi = np.asarray(
     ]
     )
 # Specify some evaluation metrics for custom model
-eval_metrics = [modify_metric(tf.keras.metrics.BinaryAccuracy(name="Binary Accuracy"), "pred_and_true"), 
-                modify_metric(tf.keras.metrics.FalsePositives(name="False Positives"), "pred_and_true"), 
-                modify_metric(tf.keras.metrics.FalseNegatives(name="False Negatives"), "pred_and_true"), 
-                modify_metric(tf.keras.metrics.Precision(name="Precision"), "pred_and_true"), 
-                modify_metric(tf.keras.metrics.Recall(name="Recall"), "pred_and_true"),
+eval_metrics = [
+    modify_metric(tf.keras.metrics.BinaryAccuracy(name="Binary Accuracy"),
+                  "pred_and_true"),
+    modify_metric(tf.keras.metrics.FalsePositives(name="False Positives"),
+                  "pred_and_true"),
+    modify_metric(tf.keras.metrics.FalseNegatives(name="False Negatives"),
+                  "pred_and_true"),
+    modify_metric(tf.keras.metrics.Precision(name="Precision"),
+                  "pred_and_true"),
+    modify_metric(tf.keras.metrics.Recall(name="Recall"),
+                  "pred_and_true")
                 # modify_metric(tf.keras.metrics.Mean(name="Mean"), "loss"),
                 # modify_metric(tf.keras.metrics.Accuracy(), "pred_and_true")
-               ]
+    ]
 
 
 def main():
@@ -814,7 +842,8 @@ def main():
     y_test = np.concatenate([y_eights_test, y_sevens_test])
 
     # data = lusi_periphery.Periphery((x_train, y_train), (x_test, y_test), phi)
-    data = lusi_periphery.Periphery(lusi_periphery.get_data_excerpt((x_train, y_train), size_of_excerpt=0.053),
+    data = lusi_periphery.Periphery(lusi_periphery.get_data_excerpt(
+        (x_train, y_train), size_of_excerpt=0.053),
         (x_test, y_test), phi)
     train_batch, test_batch = data.generate_batch_data(64,64)
      
@@ -849,16 +878,18 @@ def main():
     # loss=keras.losses.SparseCategoricalCrossentropy(),
     # loss=keras.losses.binary_crossentropy(),
     loss = keras.losses.BinaryCrossentropy(),
-    metrics=[keras.metrics.BinaryAccuracy(), "accuracy"]
+    # metrics=[keras.metrics.BinaryAccuracy(), "accuracy"]
+    metrics=eval_metrics
     )
 
     res_b_train_base = baseline_bin_class.evaluate(x_test, y_test,
         batch_size=x_test.shape[0])
 
-    baseline_bin_class.fit(data.train_data_x, data.train_data_y, batch_size=64, epochs=10)
+    baseline_bin_class.fit(data.train_data_x, data.train_data_y,
+        batch_size=64, epochs=10)
     
     res_a_train_base = baseline_bin_class.evaluate(x_test, y_test,
-    batch_size=x_test.shape[0])
+        batch_size=x_test.shape[0])
     perf_summary = {
         "LUSI": (res_b_train, res_a_train),
         "ERM" : (res_b_train_base, res_a_train_base),

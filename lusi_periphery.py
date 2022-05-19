@@ -3,6 +3,8 @@ import numpy as np
 import functools
 import matplotlib.pyplot as plt
 from primefac import primefac
+from pprint import pprint
+import pandas as pd
 
 class Periphery:
     def __init__(self, train_data=None, test_data=None, phi=np.array([]), batch_size_1=32, batch_size_2=32) -> None:
@@ -305,5 +307,102 @@ def visual_validation(n, data):
             ax[i,j].axis("off")
     
     return None
+
+
+
+
+def random_experiment(confs, n_jobs=10):
+    """Given a dictionary with configurations run random experiments.
+    
+    Parameters:
+    confs :: dict
+        Dictionary containing configurations for experiments.
+        See sample dict below.
+
+    n_jobs :: int
+        Number of random experiments to be run.
+    """
+    hparam_choices = dict()
+    confs_keys = list(confs.keys())
+
+    for hparam, v in confs.items():
+        select_indices = np.random.randint(0, len(v), size=n_jobs)
+        hparam_choices[hparam] = v[select_indices]
+    
+    # bundle hparam_choices data together to obtain job configs
+    hparam_unpacked =  list(zip(*hparam_choices.values()))
+    jobs = [{confs_keys[i] : hparam_unpacked[j][i] for i in \
+            range(len(confs_keys))} for j in range(len(hparam_unpacked))]
+
+    return None
+
+def run_and_eval_jobs(jobs):
+    """Run a list of jobs and save results.
+    
+    Parameters:
+    jobs :: list(dict)
+        A list of dictionaries with each dictionary in the config format.
+
+    """
+    res_df = pd.DataFrame(columns=jobs[0].keys())
+    res_df["results"] = None
+    
+    for job in jobs:
+
+        results_job = run_config(job)
+        job["results"] = results_job
+        res_df = pd.concat([res_df, pd.Series(job).to_frame().T], 
+                           ignore_index=True)
+        
+
+    
+    return None
+
+
+def run_config(conf, no_of_runs=10):
+    """Run a job/ config and return results.
+    
+    Interpret config dictionary, build model, run training on data and
+    evaluate model on test dataset. Do this no_of_runs times.
+
+    Parameters:
+    no_of_runs :: int
+        Number of runs to make for same model to gauge variance of results.
+
+    Returns:
+    list of results for given metric.
+    
+    """
+
+    return None
+
+
+
+config_dict = {
+    "model_type" : ["lusi", "erm", "erm-lusi"],
+    "model_arch" : [
+                    (1, [50]), (1, [100]), (1, [500]), (2, [50, 20]),
+                    (2, [100, 50]), (2, [500, 100]), (2, [1000, 500]),
+                    (3, [100, 50, 20]), (3, [500, 200, 100]),
+                    (3, [500, 100, 20]),
+                    (4, [500, 300, 200, 100]), (4, [500, 200, 100, 50]),
+                    (4, [500, 200, 50, 10]), (4, [100, 50, 20, 10])],
+    "total_data" : [6000, 3000, 1000, 500, 200, 100, 64],
+    "batch_size" : [(128, 128), (128, 64), (64, 64), (64, 32), (32, 64),
+                     (32, 32), (32, 16), (16, 32), (32, 8), (8, 32), (8,8)],
+    "no_of_predicates" : [3, 6, 8, 11],
+    "epochs_training" : [1, 2, 5, 10, 15, 20, 30]}
+
+
+config_dict = {hparam : np.asarray(v) for hparam, v in config_dict.items()}
+
+
+def main():
+    pprint(random_experiment(config_dict))
+    return None
+    
+
+if __name__ == "__main__":
+    main()
 
 
