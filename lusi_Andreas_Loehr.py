@@ -21,13 +21,13 @@ class LusiModel(tf.keras.Model):
           keras API.
     """
     
-    def __init__(self, m_inner_prod, model=None, tau=None) -> None:
-        """Instatiate model with custom training loop adapted to LUSI method.
+    def __init__(self, m_inner_prod, model=None, tau=None):
+        """Instatiate model with custom training loop with LUSI method.
 
         Parameters:
 
         m_inner_prod :: tf.Variable with appropriate dims, format tf.float32.
-            Matrix used for custom inner product in Lusi Loss ('M' in paper).
+            Matrix used for custom inner product in Lusi Loss ('W' in paper).
 
         model :: tensorflow model | None.
             Underlying model to be used to make predictions.
@@ -61,15 +61,16 @@ class LusiModel(tf.keras.Model):
 
         return self.model.summary()
     
-    def add_optimizer(self, optimizer) -> None:
-        """Add tf optimizer to use."""
+
+    def add_optimizer(self, optimizer):
+        """Add tf.optimizer to use during training."""
 
         self.optimizer = optimizer
 
         return None
 
 
-    def train(self, train_dataset, num_epochs, train_metrics=[], verbose=True):
+    def train(self, train_dataset, epochs, train_metrics=[], verbose=True):
         """Training loop for custom training with LUSI loss.
     
         Parameters:
@@ -81,7 +82,7 @@ class LusiModel(tf.keras.Model):
             Use the Periphery.generate_batch_data method from
             lusi_periphery.py to obtain correct structure.
         
-        num_epochs :: int
+        epochs :: int
             Number of epochs to train.
         
         train_metrics :: list[metrics]
@@ -106,7 +107,7 @@ class LusiModel(tf.keras.Model):
                 raise ValueError("Check if dims of m_inner_prod and no. of \
                                  predicates match.")
         
-        for epoch in range(num_epochs):
+        for epoch in range(epochs):
             if verbose:
                 print("\nStart of epoch %d" % (epoch,))   
 
@@ -352,7 +353,7 @@ class LusiErm(tf.keras.Model):
         return None
 
 
-    def train(self, train_dataset, num_epochs, train_metrics=[], verbose=True):
+    def train(self, train_dataset, epochs, train_metrics=[], verbose=True):
         """Training loop for custom training with LUSI loss.
     
         Parameters:
@@ -364,7 +365,7 @@ class LusiErm(tf.keras.Model):
             Use the Periphery.generate_batch_data method from
             lusi_periphery.py to obtain correct structure.
         
-        num_epochs :: int
+        epochs :: int
             Number of epochs to train.
         
         train_metrics :: list[metrics]
@@ -389,7 +390,7 @@ class LusiErm(tf.keras.Model):
                 raise ValueError("Check if dims of m_inner_prod and no. of \
                                  predicates match.")
         
-        for epoch in range(num_epochs):
+        for epoch in range(epochs):
             if verbose:
                 print("\nStart of epoch %d" % (epoch,))   
 
@@ -600,17 +601,17 @@ class ERM():
     
     def train(self, x_train, y_train, batch_size, epochs):
         """Call fit method of model."""
-
-        self.model.fit(x_train, y_train, batch_size=batch_size, epochs=epochs)
         
-        return None
+        return self.model.fit(x_train, y_train, batch_size=batch_size,
+                              epochs=epochs)
     
     def evaluate(self, x_test, y_test, batch_size):
         """Call evaluate method of model."""
         self.model.evaluate(x_test, y_test, batch_size=batch_size)
         
 
-        return None
+        return self.model.evaluate(x_test, y_test, 
+                                   batch_size=batch_size)
         
         
 
@@ -828,10 +829,12 @@ def random_experiment(confs, n_jobs=10):
     jobs = [{confs_keys[i] : hparam_unpacked[j][i] for i in \
             range(len(confs_keys))} for j in range(len(hparam_unpacked))]
 
-    return None
+    return jobs
 
 
-def run_and_eval_jobs(jobs):
+def run_and_eval_jobs(jobs, train_data, test_data, no_of_runs=10,
+        eval_metrics=[modify_metric(tf.keras.metrics.BinaryAccuracy(),
+                                    "pred_and_true")]):
     """Run a list of jobs and save results.
     
     Parameters:
@@ -840,12 +843,18 @@ def run_and_eval_jobs(jobs):
 
     """
     res_df = pd.DataFrame(columns=jobs[0].keys())
-    res_df["results"] = None
+    df_expand = ["results_" + str(i+1) for i in range(no_of_runs)]
+    
+    res_df[df_expand] = None
     
     for job in jobs:
 
-        results_job = run_config(job)
-        job["results"] = results_job
+        results_job = run_config(job, train_data, test_data,
+                                 no_of_runs=no_of_runs)
+        
+        for i, res in enumerate(results_job):
+            job["results_"+str(i+1)] = res
+
         res_df = pd.concat([res_df, pd.Series(job).to_frame().T], 
                            ignore_index=True)
     
@@ -853,7 +862,8 @@ def run_and_eval_jobs(jobs):
 
 
 def run_config(conf, train_data, test_data, no_of_runs=10,
-        eval_metrics=[modify_metric(tf.keras.metrics.BinaryAccuracy())]):
+        eval_metrics=[modify_metric(tf.keras.metrics.BinaryAccuracy(),
+                                    tag="pred_and_true")]):
     """Run a job/ config and return results.
     
     Interpret config dictionary, build model, run training on data and
@@ -878,7 +888,8 @@ def run_config(conf, train_data, test_data, no_of_runs=10,
     
     results = []
 
-    for run in no_of_runs:    
+    for run in range(no_of_runs):
+        print(f"Run no. {run}.")    
         # repeat with same config no_of_runs times
         model = keras.Sequential([layers.Flatten(input_shape=(28,28))])
 
@@ -897,42 +908,55 @@ def run_config(conf, train_data, test_data, no_of_runs=10,
 
         # parse model type
         # need no. of predicates for W
-        w_matrix = tf.Variable(np.diag(np.ones(conf["no_of_predicates"])))
+        w_matrix = tf.Variable(np.diag(np.ones(conf["no_of_predicates"])),
+                               dtype=tf.float32)
 
         if conf["model_type"] == "lusi":
 
             m = LusiModel(w_matrix, model=model)
+            m.add_optimizer(keras.optimizers.SGD())
+
 
         elif conf["model_type"] == "erm-lusi":
             m = LusiErm(w_matrix, conf["alpha"], model=model, erm_loss=tf.keras.losses.BinaryCrossentropy())
-        
+            m.add_optimizer(keras.optimizers.SGD())
+
         else:
             # base model, compile
             m = ERM(model=model)
-
-
-            model.compile(
+            m.compile(
                 optimizer=keras.optimizers.SGD(),
                 loss = keras.losses.BinaryCrossentropy(),
                 metrics=eval_metrics
                 )
+        
         # parse total_data parameter
         train_data = lusi_periphery.get_data_excerpt(train_data, balanced=True,
                     size_of_excerpt=float(conf["total_data"]))
         
-        periph = lusi_periphery.Periphery(train_data, test_data)
+        periph = lusi_periphery.Periphery(train_data, test_data, phi)
 
         # parse batch data
         train_batch = periph.generate_batch_data(
                                 batch_size_1=conf["batch_size"][0],
                                 batch_size_2=conf["batch_size"][1],
-                                train_only=True)
+                                train_only=True)[0]
         
-        m.train(train_data, num_epochs=conf["num_epochs"], verbose=False)
-        results.append(m.evaluate(test_data, eval_metrics))
+        if conf["model_type"] in {"erm-lusi", "lusi"}:
+            m.train(train_batch, epochs=conf["epochs"], verbose=False)
+            results.append(m.evaluate(test_data, eval_metrics))
 
+        else:
+            # standard erm model
+            m.train(periph.train_data_x, periph.train_data_y,
+                    epochs=conf["epochs"], 
+                    batch_size=conf["batch_size"][0])    
+        
+            results.append(m.evaluate(test_data[0], test_data[1],
+                                      batch_size=test_data[0].shape[0]))
+            print("Stop")
+    
     return results
-
 
 config_dict = {
     "model_type" : ["lusi", "erm", "erm-lusi"],
@@ -947,8 +971,10 @@ config_dict = {
     "batch_size" : [(128, 128), (128, 64), (64, 64), (64, 32), (32, 64),
                      (32, 32), (32, 16), (16, 32), (32, 8), (8, 32), (8,8)],
     "no_of_predicates" : [3, 6, 9, 11],
-    "epochs_training" : [1, 2, 5, 10, 15, 20, 30],
+    "epochs" : [1, 2, 5, 10, 15, 20, 30],
     "alpha" : [0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.99]}
+
+config_dict = {hparam : np.asarray(v, dtype="object") for hparam, v in config_dict.items()}
 
 
 # partial func defs for use with Periphery class
@@ -991,10 +1017,10 @@ phi_ls = [
     local_pixel_intensity_lr
     ]
 
-phi_3 = np.asarray(phi_ls[:3])
-phi_6 = np.asarray(phi_ls[:6])
-phi_9 = np.asarray(phi_ls[:9])
-phi_11 = np.asarray(phi_ls)
+phi_3 = np.asarray(phi_ls[:3], dtype="object")
+phi_6 = np.asarray(phi_ls[:6], dtype="object")
+phi_9 = np.asarray(phi_ls[:9], dtype="object")
+phi_11 = np.asarray(phi_ls, dtype="object")
 
 phi_dct = {
     3 : phi_3,
@@ -1055,14 +1081,14 @@ def main():
     lusi_model = LusiModel(w_matrix)
     lusi_model.add_optimizer(tf.keras.optimizers.SGD())
     res_b_train = lusi_model.evaluate(data.test_data, eval_metrics)
-    lusi_model.train(train_batch, num_epochs=10)
+    lusi_model.train(train_batch, epochs=10)
     res_a_train = lusi_model.evaluate(data.test_data, eval_metrics)
     
     # create lusi-erm model, 0.8 weighting for erm, 0.2 for LUSI
     lusi_erm = LusiErm(w_matrix, alpha=0.8)
     lusi_erm.add_optimizer(tf.keras.optimizers.SGD())
     res_b_train_lusi_erm = lusi_erm.evaluate(data.test_data, eval_metrics)
-    lusi_erm.train(train_batch, num_epochs=10)
+    lusi_erm.train(train_batch, epochs=10)
     res_a_train_lusi_erm = lusi_erm.evaluate(data.test_data, eval_metrics)
 
     # create baseline model
@@ -1099,5 +1125,34 @@ def main():
     
     return None
 
+
+def experiments():
+
+    (x_train, y_train), (x_test, y_test) = keras.datasets.mnist.load_data()
+    # extract 7 and 8
+    eights = x_train[y_train == 8]/255
+    sevens = x_train[y_train == 7]/255
+    y_eights = np.ones(eights.shape[0])
+    y_sevens = np.zeros(sevens.shape[0])
+    # merge 7 and 8
+    x_train = np.concatenate([eights, sevens])
+    y_train = np.concatenate([y_eights, y_sevens])
+
+    # same for test data
+    eights_test = x_test[y_test == 8]/255
+    sevens_test = x_test[y_test == 7]/255
+    y_eights_test = np.ones(eights_test.shape[0])
+    y_sevens_test = np.zeros(sevens_test.shape[0])
+    x_test = np.concatenate([eights_test, sevens_test])
+    y_test = np.concatenate([y_eights_test, y_sevens_test])
+
+
+    rand_exps = random_experiment(config_dict, n_jobs=20)
+    res_df = run_and_eval_jobs(rand_exps, (x_train, y_train), (x_test, y_test), no_of_runs=10)
+    
+    res_df.to_csv("res_df.csv")
+    return None
+
 if __name__ == "__main__":
-    main()
+    # main()
+    experiments()
