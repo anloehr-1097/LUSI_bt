@@ -570,6 +570,49 @@ class LusiErm(tf.keras.Model):
         return [(eval_metric.name, eval_metric.result()) for eval_metric in eval_metrics]
 
 
+class ERM():
+    "Wrap simple keras model for easier use with run_config function."
+    
+    def __init__(self, model=None) -> None:
+        if not model:            
+            # if no model given, use this small neural net as default.
+            self.model = keras.Sequential(
+                [layers.Flatten(input_shape=(28,28)),
+                 layers.Dense(100, activation="relu", name="hidden_layer_01"),
+                 layers.Dense(1, name="output_layer", activation="sigmoid") # interpret output as prob. for class 1
+                ]
+                )    
+        else:
+            self.model = model
+
+        return None
+        
+
+    def compile(self, optimizer=keras.optimizers.SGD(),
+                loss=keras.losses.BinaryCrossentropy(), metrics=[]):
+        
+        self.model.compile(
+                optimizer=optimizer,
+                loss=loss,
+                metrics=metrics
+                )
+        return None
+    
+    def train(self, x_train, y_train, batch_size, epochs):
+        """Call fit method of model."""
+
+        self.model.fit(x_train, y_train, batch_size=batch_size, epochs=epochs)
+        
+        return None
+    
+    def evaluate(self, x_test, y_test, batch_size):
+        """Call evaluate method of model."""
+        self.model.evaluate(x_test, y_test, batch_size=batch_size)
+        
+
+        return None
+        
+        
 
 def symmetry(imgs, axis="both"):
     """Calculate a symmetry score for normalized pictures.
@@ -832,44 +875,63 @@ def run_config(conf, train_data, test_data, no_of_runs=10,
     list of results for given metrics.
     
     """
-
     
-    model = keras.Sequential([layers.Flatten(input_shape=(28,28))])
+    results = []
 
-    # Parse conf dict
+    for run in no_of_runs:    
+        # repeat with same config no_of_runs times
+        model = keras.Sequential([layers.Flatten(input_shape=(28,28))])
 
-    # model architecture
-    for layer_no in range(conf["model_arch"][0]):
-        # add new layer with size as indicated in respective entry in list
-        model.add(layers.Dense(conf["model_arch"][1][layer_no], activation="relu",
-                               name="hl_"+str(layer_no)))
-    
-    model.add(layers.Dense(1, activation="sigmoid", name="output_layer"))
+        # Parse conf dict
 
-    # parse model type
-    # need no. of predicates for W
-    w_matrix = tf.Variable(np.diag(np.ones(conf["no_of_prediicates"])))
+        # model architecture
+        for layer_no in range(conf["model_arch"][0]):
+            # add new layer with size as indicated in respective entry in list
+            model.add(layers.Dense(conf["model_arch"][1][layer_no], activation="relu",
+                                name="hl_"+str(layer_no)))
+        
+        model.add(layers.Dense(1, activation="sigmoid", name="output_layer"))
 
-    if conf["model_type"] == "lusi":
-        LusiModel(w_matrix, model=model)
+        # parse no_of_predicates
+        phi = phi_dct[conf["no_of_predicates"]]
 
-    elif conf["model_type"] == "erm-lusi":
-        LusiErm(w_matrix, conf["alpha"], model=model, erm_loss=tf.keras.losses.BinaryCrossentropy())
-    
-    else:
-        # base model, compile
-        model.compile(
-            optimizer=keras.optimizers.SGD(),
-            loss = keras.losses.BinaryCrossentropy(),
-            metrics=eval_metrics
-            )
-    # parse total_data parameter
-    d_train = lusi_periphery.get_data_excerpt(train_data, balanced=True,
-                  size_of_excerpt=float(conf["total_data"]))
+        # parse model type
+        # need no. of predicates for W
+        w_matrix = tf.Variable(np.diag(np.ones(conf["no_of_predicates"])))
 
-    # ...
+        if conf["model_type"] == "lusi":
 
-    return None
+            m = LusiModel(w_matrix, model=model)
+
+        elif conf["model_type"] == "erm-lusi":
+            m = LusiErm(w_matrix, conf["alpha"], model=model, erm_loss=tf.keras.losses.BinaryCrossentropy())
+        
+        else:
+            # base model, compile
+            m = ERM(model=model)
+
+
+            model.compile(
+                optimizer=keras.optimizers.SGD(),
+                loss = keras.losses.BinaryCrossentropy(),
+                metrics=eval_metrics
+                )
+        # parse total_data parameter
+        train_data = lusi_periphery.get_data_excerpt(train_data, balanced=True,
+                    size_of_excerpt=float(conf["total_data"]))
+        
+        periph = lusi_periphery.Periphery(train_data, test_data)
+
+        # parse batch data
+        train_batch = periph.generate_batch_data(
+                                batch_size_1=conf["batch_size"][0],
+                                batch_size_2=conf["batch_size"][1],
+                                train_only=True)
+        
+        m.train(train_data, num_epochs=conf["num_epochs"], verbose=False)
+        results.append(m.evaluate(test_data, eval_metrics))
+
+    return results
 
 
 config_dict = {
@@ -933,6 +995,14 @@ phi_3 = np.asarray(phi_ls[:3])
 phi_6 = np.asarray(phi_ls[:6])
 phi_9 = np.asarray(phi_ls[:9])
 phi_11 = np.asarray(phi_ls)
+
+phi_dct = {
+    3 : phi_3,
+    6 : phi_6,
+    9 : phi_9,
+    11 : phi_11
+    }
+
 
 
 # Specify some evaluation metrics for custom model
