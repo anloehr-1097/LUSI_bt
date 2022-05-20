@@ -762,6 +762,133 @@ def modify_metric(metric, tag):
     return metric
 
 
+def random_experiment(confs, n_jobs=10):
+    """Given a dictionary with configurations run random experiments.
+    
+    Parameters:
+    confs :: dict
+        Dictionary containing configurations for experiments.
+        See sample dict below.
+
+    n_jobs :: int
+        Number of random experiments to be run.
+    """
+    hparam_choices = dict()
+    confs_keys = list(confs.keys())
+
+    for hparam, v in confs.items():
+        select_indices = np.random.randint(0, len(v), size=n_jobs)
+        hparam_choices[hparam] = v[select_indices]
+    
+    # bundle hparam_choices data together to obtain job configs
+    hparam_unpacked =  list(zip(*hparam_choices.values()))
+    jobs = [{confs_keys[i] : hparam_unpacked[j][i] for i in \
+            range(len(confs_keys))} for j in range(len(hparam_unpacked))]
+
+    return None
+
+
+def run_and_eval_jobs(jobs):
+    """Run a list of jobs and save results.
+    
+    Parameters:
+    jobs :: list(dict)
+        A list of dictionaries with each dictionary in the config format.
+
+    """
+    res_df = pd.DataFrame(columns=jobs[0].keys())
+    res_df["results"] = None
+    
+    for job in jobs:
+
+        results_job = run_config(job)
+        job["results"] = results_job
+        res_df = pd.concat([res_df, pd.Series(job).to_frame().T], 
+                           ignore_index=True)
+    
+    return res_df
+
+
+def run_config(conf, train_data, test_data, no_of_runs=10,
+        eval_metrics=[modify_metric(tf.keras.metrics.BinaryAccuracy())]):
+    """Run a job/ config and return results.
+    
+    Interpret config dictionary, build model, run training on data and
+    evaluate model on test dataset. Do this no_of_runs times.
+
+    Parameters:
+    conf :: dict
+
+    train_data :: tuple(np.ndarray, np.ndarray)
+
+    test_data :: tuple(np.ndarray, np.ndarray)
+
+    no_of_runs :: int
+        Number of runs to make for same model to gauge variance of results.
+    
+    eval_metrics :: list[modify_metric(tf.keras.metrics object)]
+
+    Returns:
+    list of results for given metrics.
+    
+    """
+
+    
+    model = keras.Sequential([layers.Flatten(input_shape=(28,28))])
+
+    # Parse conf dict
+
+    # model architecture
+    for layer_no in range(conf["model_arch"][0]):
+        # add new layer with size as indicated in respective entry in list
+        model.add(layers.Dense(conf["model_arch"][1][layer_no], activation="relu",
+                               name="hl_"+str(layer_no)))
+    
+    model.add(layers.Dense(1, activation="sigmoid", name="output_layer"))
+
+    # parse model type
+    # need no. of predicates for W
+    w_matrix = tf.Variable(np.diag(np.ones(conf["no_of_prediicates"])))
+
+    if conf["model_type"] == "lusi":
+        LusiModel(w_matrix, model=model)
+
+    elif conf["model_type"] == "erm-lusi":
+        LusiErm(w_matrix, conf["alpha"], model=model, erm_loss=tf.keras.losses.BinaryCrossentropy())
+    
+    else:
+        # base model, compile
+        model.compile(
+            optimizer=keras.optimizers.SGD(),
+            loss = keras.losses.BinaryCrossentropy(),
+            metrics=eval_metrics
+            )
+    # parse total_data parameter
+    d_train = lusi_periphery.get_data_excerpt(train_data, balanced=True,
+                  size_of_excerpt=float(conf["total_data"]))
+
+    # ...
+
+    return None
+
+
+config_dict = {
+    "model_type" : ["lusi", "erm", "erm-lusi"],
+    "model_arch" : [
+                    (1, [50]), (1, [100]), (1, [500]), (2, [50, 20]),
+                    (2, [100, 50]), (2, [500, 100]), (2, [1000, 500]),
+                    (3, [100, 50, 20]), (3, [500, 200, 100]),
+                    (3, [500, 100, 20]),
+                    (4, [500, 300, 200, 100]), (4, [500, 200, 100, 50]),
+                    (4, [500, 200, 50, 10]), (4, [100, 50, 20, 10])],
+    "total_data" : [6000, 3000, 1000, 500, 200, 100, 64],
+    "batch_size" : [(128, 128), (128, 64), (64, 64), (64, 32), (32, 64),
+                     (32, 32), (32, 16), (16, 32), (32, 8), (8, 32), (8,8)],
+    "no_of_predicates" : [3, 6, 9, 11],
+    "epochs_training" : [1, 2, 5, 10, 15, 20, 30],
+    "alpha" : [0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.99]}
+
+
 # partial func defs for use with Periphery class
 local_pixel_intensity_center = functools.partial(local_pixel_intensity_single,
                                                  patch=((10,20), (10,20)))
@@ -788,20 +915,26 @@ symmetry_boxed_hor_single = functools.partial(symmetry_boxed,
 
 determine_holes_15 = functools.partial(determine_holes, thresh=0.15)
 
-phi = np.asarray(
-    [avg_pixel_intensity,
+phi_ls = [
+    avg_pixel_intensity,
+    symmetry_boxed_vert_single,
+    symmetry_boxed_hor_single,
+    symmetry_boxed_both_single,
+    determine_holes_15,
     weighted_pixel_intesity,
     local_pixel_intensity_center,
     local_pixel_intensity_ll,
-    local_pixel_intensity_ul,
-    local_pixel_intensity_lr,
     local_pixel_intensity_ur,
-    symmetry_boxed_both_single,
-    symmetry_boxed_vert_single,
-    symmetry_boxed_hor_single,
-    determine_holes_15
+    local_pixel_intensity_ul,
+    local_pixel_intensity_lr
     ]
-    )
+
+phi_3 = np.asarray(phi_ls[:3])
+phi_6 = np.asarray(phi_ls[:6])
+phi_9 = np.asarray(phi_ls[:9])
+phi_11 = np.asarray(phi_ls)
+
+
 # Specify some evaluation metrics for custom model
 eval_metrics = [
     modify_metric(tf.keras.metrics.BinaryAccuracy(name="Binary Accuracy"),
@@ -844,9 +977,8 @@ def main():
     # data = lusi_periphery.Periphery((x_train, y_train), (x_test, y_test), phi)
     data = lusi_periphery.Periphery(lusi_periphery.get_data_excerpt(
         (x_train, y_train), size_of_excerpt=0.053),
-        (x_test, y_test), phi)
+        (x_test, y_test), phi_11)
     train_batch, test_batch = data.generate_batch_data(64,64)
-     
     
     # create lusi model
     w_matrix = tf.Variable(np.diag(np.ones(11)), dtype=tf.float32)

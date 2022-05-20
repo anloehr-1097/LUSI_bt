@@ -353,10 +353,8 @@ def run_and_eval_jobs(jobs):
         job["results"] = results_job
         res_df = pd.concat([res_df, pd.Series(job).to_frame().T], 
                            ignore_index=True)
-        
-
     
-    return None
+    return res_df
 
 
 def run_config(conf, no_of_runs=10):
