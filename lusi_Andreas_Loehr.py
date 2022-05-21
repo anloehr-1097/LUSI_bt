@@ -18,7 +18,8 @@ class LusiModel(tf.keras.Model):
     """Given a model, e.g. neural net, implement the LUSI approach.
     
     Note: This code has only been tested with neural nets defined via
-          keras API.
+          keras API. It relies on the autodiff feature from tensorflow.
+
     """
     
     def __init__(self, m_inner_prod, model=None, tau=None):
@@ -607,11 +608,14 @@ class ERM():
     
     def evaluate(self, x_test, y_test, batch_size):
         """Call evaluate method of model."""
-        self.model.evaluate(x_test, y_test, batch_size=batch_size)
-        
+        eval_results = self.model.evaluate(x_test, y_test, batch_size=batch_size)
+        # start only from second element, since first element is loss
+        eval_results = [tf.Variable(er) for er in eval_results[1:]]
+        evals = list(zip(self.model.metrics_names[1:], eval_results))
 
-        return self.model.evaluate(x_test, y_test, 
-                                   batch_size=batch_size)
+        return evals
+        # return self.model.evaluate(x_test, y_test, 
+        #                            batch_size=batch_size)
         
         
 
@@ -843,18 +847,28 @@ def run_and_eval_jobs(jobs, train_data, test_data, no_of_runs=10,
 
     """
     res_df = pd.DataFrame(columns=jobs[0].keys())
-    df_expand = ["results_" + str(i+1) for i in range(no_of_runs)]
+    
+
+    # df_expand = ["results_" + str(i+1) for i in range(no_of_runs)]
+    df_expand = [f"{metric.name}_{i+1}" for i in range(no_of_runs) for metric in eval_metrics]
     
     res_df[df_expand] = None
     
-    for job in jobs:
+    for j, job in enumerate(jobs):
+
+        print(f"Config no. {j}")
 
         results_job = run_config(job, train_data, test_data,
-                                 no_of_runs=no_of_runs)
-        
-        for i, res in enumerate(results_job):
-            job["results_"+str(i+1)] = res
+                                 no_of_runs=no_of_runs,
+                                 eval_metrics=eval_metrics)
+        # results = list[tf.metrics] -> need to process
 
+        for i, res in enumerate(results_job):
+            # res is list[tf.metrics]
+            for metric in res:
+                # create key for metric
+                job[f"{metric[0]}_{i+1}"] = metric[1].numpy()
+                # job["result_"+str(i+1)] = res
         res_df = pd.concat([res_df, pd.Series(job).to_frame().T], 
                            ignore_index=True)
     
@@ -951,9 +965,12 @@ def run_config(conf, train_data, test_data, no_of_runs=10,
             m.train(periph.train_data_x, periph.train_data_y,
                     epochs=conf["epochs"], 
                     batch_size=conf["batch_size"][0])    
-        
+
             results.append(m.evaluate(test_data[0], test_data[1],
                                       batch_size=test_data[0].shape[0]))
+            # results.append(m.evaluate(test_data[0], test_data[1],
+            #                          batch_size=test_data[0].shape[0]))
+
             print("Stop")
     
     return results
@@ -1147,7 +1164,7 @@ def experiments():
     y_test = np.concatenate([y_eights_test, y_sevens_test])
 
 
-    rand_exps = random_experiment(config_dict, n_jobs=20)
+    rand_exps = random_experiment(config_dict, n_jobs=10)
     res_df = run_and_eval_jobs(rand_exps, (x_train, y_train), (x_test, y_test), no_of_runs=10)
     
     res_df.to_csv("res_df.csv")
