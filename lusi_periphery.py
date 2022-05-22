@@ -7,31 +7,23 @@ from pprint import pprint
 import pandas as pd
 
 class Periphery:
-    def __init__(self, train_data=None, test_data=None, phi=np.array([]), batch_size_1=32, batch_size_2=32) -> None:
+    def __init__(self, train_data=None, test_data=None, phi=np.array([])):
         
-        """Bind all data and objetcs for Lusi method.
+        """Bind all data and objetcs for Lusi and ERM-Lusi method.
         
         Parameters:
-        train_data :: tuple of np.ndarrays - (x_train, y_train) | None
+        train_data :: tuple of np.ndarrays (x_train, y_train) | None
             Training data.
         
-        test_data :: tuple of np.ndarrays - (x_test, y_test) | None
+        test_data :: tuple of np.ndarrays (x_test, y_test) | None
             Test data.
             
         phi :: np.ndarray[list[function]]
-            A numpy array of list of functions to be applied on x_data.
-        
-        batch_size_1 :: int
-            Batch size B from paper. This batch size is used in training.
-            Default value: 32.
-            
-        batch_size_2 :: int
-            Batch size B' from paper. This batch size is used in training.
-            Default value: 32.        
+            A numpy array of list of functions to be applied on x_data.      
         """
         
         # create attributes with None values, will be populated in set_phi method
-        self.phi = np.array([])
+        self.phi = phi
         self.phi_eval_train = tf.constant([])
         self.phi_eval_test = tf.constant([])
         self.train_data = None
@@ -45,8 +37,7 @@ class Periphery:
     
 
     def generate_batch_data(self, batch_size_1=64, batch_size_2=64, train_only=False):
-        """Generate batch datasets for training and test data.
-        
+        """Generate batch datasets for training data (and test data).
         
         Parameters:
         
@@ -60,10 +51,12 @@ class Periphery:
             Create batch dataset for train data only.
         
         Returns:
-        A tuple of batched datasets.
+        A tuple of batched datasets. If train_only, 1-tuple with batched
+        train dataset, else, batched train and batched test datasets.
         """
         
         # Check for provision of relevant data.
+        # If not provided until call of this method, raise error.
         if not self.train_data:
             raise ValueError("No training data provided.")
             
@@ -71,19 +64,23 @@ class Periphery:
             raise ValueError("No test data provided.")
             
         if not (tf.size(self.phi_eval_train) > 0).numpy():
+            # requires evaluation of phis on training data
             raise ValueError("No phi evaluation data for training data provided.")
         
         #
-        dataset_train = tf.data.Dataset.from_tensor_slices((self.phi_eval_train,
-                                                      self.train_data[0], self.train_data[1]))   
+        dataset_train = tf.data.Dataset.from_tensor_slices(
+            (self.phi_eval_train, self.train_data[0], self.train_data[1]))
         
-        batch_dataset_1_train = dataset_train.shuffle(buffer_size=1024).batch(batch_size_1,
-                                                                              drop_remainder=True)
-        batch_dataset_2_train = dataset_train.shuffle(buffer_size=1024).batch(batch_size_2,
-                                                                              drop_remainder=True)
+        # Important: need drop remainder for training to work
+        # (was a problem, not sure if still persists)
+        batch_dataset_1_train = dataset_train.shuffle(
+            buffer_size=1024).batch(batch_size_1, drop_remainder=True)
 
-        batch_dataset_train = tf.data.Dataset.zip((batch_dataset_1_train, batch_dataset_2_train))   
-        
+        batch_dataset_2_train = dataset_train.shuffle(
+            buffer_size=1024).batch(batch_size_2, drop_remainder=True)
+
+        batch_dataset_train = tf.data.Dataset.zip((batch_dataset_1_train,
+                                                   batch_dataset_2_train))
         
         if train_only:
             return (batch_dataset_train, )
@@ -93,23 +90,26 @@ class Periphery:
         if not (tf.size(self.phi_eval_test) > 0).numpy():
             raise ValueError("No phi evaluation data for test data provided.")
         
-        dataset_test = tf.data.Dataset.from_tensor_slices((self.phi_eval_test,
-                                                            self.test_data[0], self.test_data[1]))   
+        dataset_test = tf.data.Dataset.from_tensor_slices(
+            (self.phi_eval_test, self.test_data[0], self.test_data[1]))
 
-        batch_dataset_1_test = dataset_test.shuffle(buffer_size=1024).batch(batch_size_1,
-                                                                              drop_remainder=True)
-        batch_dataset_2_test = dataset_test.shuffle(buffer_size=1024).batch(batch_size_2,
-                                                                              drop_remainder=True)
+        batch_dataset_1_test = dataset_test.shuffle(
+            buffer_size=1024).batch(batch_size_1, drop_remainder=True)
+        
+        batch_dataset_2_test = dataset_test.shuffle(
+            buffer_size=1024).batch(batch_size_2, drop_remainder=True)
 
-        batch_dataset_test = tf.data.Dataset.zip((batch_dataset_1_test, batch_dataset_2_test)) 
+        batch_dataset_test = tf.data.Dataset.zip((batch_dataset_1_test,
+                                                  batch_dataset_2_test))
             
         return (batch_dataset_train, batch_dataset_test)
    
-            
-    def apply_phi(self, which_dataset="both") -> None:
-        """ Evaluate predicates on data and store values.
 
-        Parameters: 
+    def apply_phi(self, which_dataset="both"):
+        """ Evaluate predicates (phi : \mathcal{X} -> \R) on data & store.
+
+        Parameters:
+
         which_dataset :: str
             One of "train", "test", "both".
             Indicates which dataset phi should be applied to.
@@ -118,16 +118,25 @@ class Periphery:
 
         if which_dataset == "both":
             if not (self.train_data and self.test_data):
-                raise ValueError("Some data missing. Check if both train and test data provided.")
+                raise ValueError("Some data missing. Check if both train and \
+                                  test data provided.")
 
             train_x = self.train_data[0]
             test_x = self.test_data[0]
+            
+            phi_x_train = np.asarray([self.phi[i](train_x[j]) for j in \
+                range(train_x.shape[0]) for i in \
+                range(self.phi.shape[0])], dtype="object")
 
-            phi_x_train = np.asarray([self.phi[i](train_x[j]) for j in range(train_x.shape[0]) for i in range(self.phi.shape[0])])
-            phi_x_test = np.asarray([self.phi[i](test_x[j]) for j in range(test_x.shape[0]) for i in range(self.phi.shape[0])])
+            phi_x_test = np.asarray([self.phi[i](test_x[j]) for j in \
+                range(test_x.shape[0]) for i in \
+                range(self.phi.shape[0])], dtype="object")
 
-            phi_x_train = phi_x_train.reshape(train_x.shape[0], self.phi.shape[0])
-            phi_x_test = phi_x_test.reshape(test_x.shape[0], self.phi.shape[0])
+            phi_x_train = phi_x_train.reshape(train_x.shape[0],
+                                              self.phi.shape[0])
+            
+            phi_x_test = phi_x_test.reshape(test_x.shape[0],
+                                            self.phi.shape[0])
 
             phi_x_train = tf.convert_to_tensor(phi_x_train, dtype=tf.float32)
             phi_x_test = tf.convert_to_tensor(phi_x_test, dtype=tf.float32)
@@ -138,27 +147,51 @@ class Periphery:
         elif which_dataset == "train":
 
             train_x = self.train_data[0]
-            phi_x_train = np.asarray([self.phi[i](train_x[j]) for j in range(train_x.shape[0]) for i in range(self.phi.shape[0])])
-            phi_x_train = phi_x_train.reshape(train_x.shape[0], self.phi.shape[0])
+            phi_x_train = np.asarray([self.phi[i](train_x[j]) for j in \
+                range(train_x.shape[0]) for i in \
+                range(self.phi.shape[0])], dtype="object")
+            
+            phi_x_train = phi_x_train.reshape(train_x.shape[0],
+                                              self.phi.shape[0])
+
             phi_x_train = tf.convert_to_tensor(phi_x_train, dtype=tf.float32)
             self.phi_eval_train = phi_x_train
 
         else:
             test_x = self.test_data[0]
-            phi_x_test = np.asarray([self.phi[i](test_x[j]) for j in range(test_x.shape[0]) for i in range(self.phi.shape[0])])
-            phi_x_test = phi_x_test.reshape(test_x.shape[0], self.phi.shape[0])
+            phi_x_test = np.asarray([self.phi[i](test_x[j]) for j in \
+                range(test_x.shape[0]) for i in \
+                range(self.phi.shape[0])], dtype="object")
+
+            phi_x_test = phi_x_test.reshape(test_x.shape[0],
+                                            self.phi.shape[0])
+
             phi_x_test = tf.convert_to_tensor(phi_x_test, dtype=tf.float32)
             self.phi_eval_test = phi_x_test
             
         return None
     
         
-    def set_phi(self, phi : list) -> None:
+    def set_phi(self, phi):
+        """Set phi as attribute to object, call apply_phi method.
+        
+        Parameters:
+        
+        phi :: np.ndarray[functions]
+            An array of functions to be applied on data. No checks are
+            implemented checking if phi is defined on input data shape or not.
+            Has only been tested for the predicates in the module
+            'lusi_AndreasLoehr.py' which operate on images of MNIST
+            dataset.
+        """
+        
         if not phi.size > 0:
+            # only apply if phi exist
             return None
         
         self.phi = phi
         
+        # auto infer on which data to apply phi
         if self.train_data:
             if self.test_data:            
                 self.apply_phi("both")
@@ -173,6 +206,15 @@ class Periphery:
     
     
     def set_train_data(self, train_data):
+        """Set train_data as attribute to object.
+        
+        Parameters:
+        
+        train_data :: tuple(np.ndarray) | None
+            Tuple (x_train, y_train) of train data where each element is a
+            np.ndarray
+        """
+
         if not train_data:
             return None
             
@@ -188,6 +230,15 @@ class Periphery:
     
     
     def set_test_data(self, test_data):
+        """Set train_data as attribute to object.
+        
+        Parameters:
+        
+        test_data :: tuple(np.ndarray) | None
+            Tuple (x_test, y_test) of test data where each element is a
+            np.ndarray
+        """
+
         if not test_data:
             return None
         
@@ -225,16 +276,19 @@ def get_data_excerpt(data, balanced=False, size_of_excerpt=0.5):
     """
     
     if isinstance(size_of_excerpt, float) and size_of_excerpt <= 1:
-        size_of_excerpt = np.floor(size_of_excerpt * data[0].shape[0]).astype(int)
+        size_of_excerpt = np.floor(
+            size_of_excerpt * data[0].shape[0]).astype(int)
     
     if not size_of_excerpt <= data[0].shape[0]:
-        raise IndexError("Sample Size too large.")
+        raise IndexError("Sample size too large.")
     
+    # get random indices
     permute = np.random.permutation(np.arange(size_of_excerpt)).astype(int)
 
     if balanced:
+
         y_cls = set(data[1])
-        print(f"No. of classes = {len(y_cls)}")
+        # print(f"No. of classes = {len(y_cls)}")
         if len(y_cls) != 2:
             raise Exception("Pass data for binary classification problem.")
         
@@ -248,11 +302,10 @@ def get_data_excerpt(data, balanced=False, size_of_excerpt=0.5):
         y_2 = data[1][data[1] == y_2_cls]
         ind_1 = np.random.randint(low=0, high=x_1.shape[0],
                                   size=int(size_of_excerpt//2))
-                                        # size=(size_of_excerpt//2).astype(int))
+                        
         ind_2 = np.random.randint(low=0, high=x_2.shape[0],
                                           size=int((size_of_excerpt - \
                                                     size_of_excerpt//2)))
-                                          #(size_of_excerpt//2))).astype(int)
         
         x = np.concatenate([x_1[ind_1], x_2[ind_2]])
         y = np.concatenate([y_1[ind_1], y_2[ind_2]])
@@ -283,42 +336,39 @@ def visual_validation(n, data):
 
     """
 
-    # determine prime factors of n to calc. no. of rows and cols
+    # determine prime factors of n to determine 'acceptable' layout
     pfs = list(primefac(n))
     three_quart = np.floor(len(pfs) * 0.75).astype(int)
     rowcount = np.prod(pfs[: three_quart])
-    colcount = np.prod(pfs[three_quart : ])
-
+    colcount = np.prod(pfs[three_quart :])
+    
     # select n datapoints from data, bring into grid shape for easy handling
     random_indices = np.random.randint(0, high=data[0].shape[0], size=n)
     random_indices = np.reshape(random_indices, (rowcount, colcount))
     
     # determine size of figure dynamically
     size = np.max([colcount, rowcount]) * 3
-    fig, ax = plt.subplots(nrows=rowcount, ncols=colcount, figsize=(size, size))
+    fig, ax = plt.subplots(nrows=rowcount, ncols=colcount,
+                           figsize=(size, size))
     
     # populate grid with images + labels
     for i in range(rowcount):
         for j in range(colcount):
             ax[i,j].imshow(data[0][random_indices[i,j]])
-            ax[i,j].set_title("pred: ({:.2f} -> {:.0f}),  true: {:.0f}".format( \
+            ax[i,j].set_title(
+                "pred: ({:.2f} -> {:.0f}),  true: {:.0f}".format(\
                 data[2][random_indices[i,j]][0],
                 np.round(data[2][random_indices[i,j]][0]),
                 data[1][random_indices[i,j]]))
-            # ax[i,j].set_title(f"pred: {data[2][random_indices[i,j]][0]}, true: {data[1][random_indices[i,j]]}")
+            # ax[i,j].set_title(f"pred: {data[2][random_indices[i,j]][0]}, 
+            # true: {data[1][random_indices[i,j]]}")
             ax[i,j].axis("off")
     
     return None
 
 
 
-
-
-
-
-
 def main():
-    # pprint(random_experiment(config_dict))
     return None
     
 
