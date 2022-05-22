@@ -115,7 +115,6 @@ class LusiModel:
             gradient_list = []
             epoch_train_metrics_results = []
             model_weight_list = []
-            # TODO  remove -> model_weight_list.append((-1, self.layers[0].get_weights()))
             model_weight_list.append((-1, self.model.layers[0].get_weights()))
         # sanity check matrix dims and predicates match
         if not train_dataset.element_spec[0][0].shape[1] == \
@@ -1022,15 +1021,12 @@ def run_and_eval_jobs(jobs, train_data, test_data, no_of_runs=10,
         results_job = run_config(job, train_data, test_data,
                                  no_of_runs=no_of_runs,
                                  eval_metrics=eval_metrics)
-        #TODO - remove -> results = list[tf.metrics] -> need to process
         
         # append results to dataframe
         for i, res in enumerate(results_job):
-            # TODO remove -> res is list[tf.metrics]
             for metric in res:
                 # create key for metric
                 job[f"{metric[0]}_{i+1}"] = metric[1].numpy()
-                # TODO remove -> job["result_"+str(i+1)] = res
         res_df = pd.concat([res_df, pd.Series(job).to_frame().T], 
                            ignore_index=True)
     
