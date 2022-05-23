@@ -349,21 +349,30 @@ def visual_validation(n, data):
     # determine size of figure dynamically
     size = np.max([colcount, rowcount]) * 3
     fig, ax = plt.subplots(nrows=rowcount, ncols=colcount,
-                           figsize=(size, size))
-    
+                           figsize=(size, size), constrained_layout=True)
+    if len(data) == 3:
     # populate grid with images + labels
-    for i in range(rowcount):
-        for j in range(colcount):
-            ax[i,j].imshow(data[0][random_indices[i,j]])
-            ax[i,j].set_title(
-                "pred: ({:.2f} -> {:.0f}),  true: {:.0f}".format(\
-                data[2][random_indices[i,j]][0],
-                np.round(data[2][random_indices[i,j]][0]),
-                data[1][random_indices[i,j]]))
-            # ax[i,j].set_title(f"pred: {data[2][random_indices[i,j]][0]}, 
-            # true: {data[1][random_indices[i,j]]}")
-            ax[i,j].axis("off")
-    
+        for i in range(rowcount):
+            for j in range(colcount):
+                ax[i,j].imshow(data[0][random_indices[i,j]])
+                ax[i,j].set_title(
+                    "pred: ({:.2f} -> {:.0f}),  true: {:.0f}".format(\
+                    data[2][random_indices[i,j]][0],
+                    np.round(data[2][random_indices[i,j]][0]),
+                    data[1][random_indices[i,j]]))
+                # ax[i,j].set_title(f"pred: {data[2][random_indices[i,j]][0]}, 
+                # true: {data[1][random_indices[i,j]]}")
+                ax[i,j].axis("off")
+
+    else:
+        # assume data has 2 entries (x, y)
+        for i in range(rowcount):
+            for j in range(colcount):
+                ax[i,j].imshow(data[0][random_indices[i,j]])
+                ax[i,j].set_title(
+                    "Label: {:.0f}".format(data[1][random_indices[i,j]]))
+                ax[i,j].axis("off")
+
     return None
 
 
