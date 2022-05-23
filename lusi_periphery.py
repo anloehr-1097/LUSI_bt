@@ -335,7 +335,7 @@ def visual_validation(n, data):
         Tuple should consist of np.ndarrays for x, y, and model predictions.
 
     """
-
+    # TODO: also plot if pred not provided.
     # determine prime factors of n to determine 'acceptable' layout
     pfs = list(primefac(n))
     three_quart = np.floor(len(pfs) * 0.75).astype(int)

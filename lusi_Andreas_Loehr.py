@@ -1150,7 +1150,10 @@ def run_config(conf, train_data, test_data, no_of_runs=10,
 
 
 config_dict = {
+    # interpretation: in which framework to train model
     "model_type" : ["lusi", "erm", "erm-lusi"],
+    # interpretation: 1st entry -> no. of hidden layers, 
+    #                 2nd entry -> no. of. neurons in each hidden layer
     "model_arch" : [
                     (1, [50]), (1, [100]), (1, [500]), (2, [50, 20]),
                     (2, [100, 50]), (2, [500, 100]), (2, [1000, 500]),
@@ -1158,11 +1161,20 @@ config_dict = {
                     (3, [500, 100, 20]),
                     (4, [500, 300, 200, 100]), (4, [500, 200, 100, 50]),
                     (4, [500, 200, 50, 10]), (4, [100, 50, 20, 10])],
+    # interpretation: total data used for training
     "total_data" : [6000, 3000, 1000, 500, 200, 100, 64],
+    
+    # interpretation: batch sizes B, B' from paper
     "batch_size" : [(128, 128), (128, 64), (64, 64), (64, 32), (32, 64),
                      (32, 32), (32, 16), (16, 32), (32, 8), (8, 32), (8,8)],
+    
+    # interpretation: no. of predicates to use in LUSI and ERM-LUSI training
     "no_of_predicates" : [3, 6, 9, 11],
+
+    # interpretation: number of epochs to train model
     "epochs" : [1, 2, 5, 10, 15, 20, 30],
+
+    # interpretation: weighting factor in ERM-LUSI training.
     "alpha" : [0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.99]}
 
 config_dict = {hparam : np.asarray(v, dtype="object") for hparam, v in config_dict.items()}
@@ -1198,8 +1210,8 @@ phi_ls = [
     avg_pixel_intensity,
     symmetry_boxed_vert_single,
     symmetry_boxed_hor_single,
-    symmetry_boxed_both_single,
     determine_holes_15,
+    symmetry_boxed_both_single,
     weighted_pixel_intesity,
     local_pixel_intensity_center,
     local_pixel_intensity_ll,
@@ -1307,6 +1319,7 @@ def main():
     
     res_a_train_base = baseline_bin_class.evaluate(x_test, y_test,
         batch_size=x_test.shape[0])
+    
     perf_summary = {
         "LUSI": (res_b_train, res_a_train),
         "ERM" : (res_b_train_base, res_a_train_base),
@@ -1337,7 +1350,8 @@ def experiments():
 
 
     rand_exps = random_experiment(config_dict, n_jobs=4)
-    res_df = run_and_eval_jobs(rand_exps, (x_train, y_train), (x_test, y_test), no_of_runs=1)
+    res_df = run_and_eval_jobs(rand_exps, (x_train, y_train), (x_test, y_test),
+                               no_of_runs=1)
     
     res_df.to_csv("res_df.csv")
     return None
