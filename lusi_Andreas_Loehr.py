@@ -14,6 +14,7 @@ import pandas as pd
 from  pprint import pprint
 from scipy import ndimage as ndimage
 import lusi_periphery
+import multiprocessing
 
 
 # class LusiModel(tf.keras.Model):
@@ -1013,7 +1014,8 @@ def run_and_eval_jobs(jobs, train_data, test_data, no_of_runs=10,
     res_df = pd.DataFrame(columns=jobs[0].keys())
 
     # df_expand = ["results_" + str(i+1) for i in range(no_of_runs)]
-    df_expand = [f"{metric.name}_{i+1}" for i in range(no_of_runs) for metric in eval_metrics]
+    df_expand = [f"{metric.name}_{i+1}" for i in range(no_of_runs) for \
+                 metric in eval_metrics]
     res_df[df_expand] = None
     
     for j, job in enumerate(jobs):
@@ -1029,6 +1031,36 @@ def run_and_eval_jobs(jobs, train_data, test_data, no_of_runs=10,
             for metric in res:
                 # create key for metric
                 job[f"{metric[0]}_{i+1}"] = metric[1].numpy()
+        res_df = pd.concat([res_df, pd.Series(job).to_frame().T], 
+                           ignore_index=True)
+    
+    return res_df
+
+
+def eval_jobs_multi(job_res):
+    
+
+    no_of_runs = len(job_res[0][1])
+    res_df = pd.DataFrame(columns=job_res[0][0].keys())
+
+    # df_expand = ["results_" + str(i+1) for i in range(no_of_runs)]
+    # df_expand = [f"{metric.name}_{i+1}" for i in range(no_of_runs) for \
+    #              metric in job_res[0][1]]
+    
+    df_expand = [f"{metric[0][0]}_{i+1}" for i, metric in enumerate(job_res[0][1])]
+    # df_expand = [f"{metric.name}_{i+1}" for i, metric in enumerate(job_res[0][1])]
+    res_df[df_expand] = None
+    
+    for job, res in job_res:
+        
+        # append results to dataframe
+        for i, metric in enumerate(res):
+            # job[f"{metric[0]}_{i+1}"] = metric[1].numpy()
+            print(metric)
+            print(metric[0][1])
+            print(type(metric[0][1]))
+            job[f"{metric[0][0]}_{i+1}"] = metric[0][1].numpy()
+
         res_df = pd.concat([res_df, pd.Series(job).to_frame().T], 
                            ignore_index=True)
     
@@ -1149,6 +1181,123 @@ def run_config(conf, train_data, test_data, no_of_runs=10,
             #                          batch_size=test_data[0].shape[0]))
 
     return results
+
+
+def run_config_multi(conf, train_data, test_data, no_of_runs=10,
+        eval_metrics=[modify_metric(tf.keras.metrics.BinaryAccuracy(),
+                                    tag="pred_and_true")]):
+    """Run a job/ config and return results.
+    
+    Interpret config dictionary, build model, run training on data and
+    evaluate model on test dataset given hyperparameter values as provided in
+    conf. Do this no_of_runs times.
+
+    Parameters:
+    
+    conf :: dict
+        See function 'run_and_eval_jobs' for documentation regarding dict
+        structure.
+
+    train_data :: tuple(np.ndarray, np.ndarray)
+        See function 'run_and_eval_jobs' for documentation regarding param.
+
+    test_data :: tuple(np.ndarray, np.ndarray)
+        See function 'run_and_eval_jobs' for documentation regarding param.
+    
+    no_of_runs :: int
+        Number of runs to make for same model to gauge variance of results.
+        See function 'run_and_eval_jobs' for documentation regarding param.
+    
+    eval_metrics :: list[modify_metric(tf.keras.metrics object)]
+        See function 'run_and_eval_jobs' for documentation regarding param.
+
+    Return :: list[tuple[metric_name, metric_result]]
+        Return list of results for given metrics, where number of entries in
+        list equals no_of_runs.
+    
+    """
+    
+    results = []
+
+    for run in range(no_of_runs):
+        # repeat with same config no_of_runs times
+        print(f"Run no. {run}.")    
+
+        model = keras.Sequential([layers.Flatten(input_shape=(28,28))])
+
+        # parse conf dict
+
+        # parse model architecture
+        for layer_no in range(conf["model_arch"][0]):
+            # add new layer with size as indicated in respective entry in list
+            model.add(layers.Dense(conf["model_arch"][1][layer_no],
+                                   activation="relu",
+                                   name="hl_"+str(layer_no)))
+        
+        # last layer alwazs sigmoid, 1 node
+        model.add(layers.Dense(1, activation="sigmoid", name="output_layer"))
+
+        # parse no_of_predicates
+        phi = phi_dct[conf["no_of_predicates"]]
+
+        # parse model type
+        # need no. of predicates for W
+        # create W as identity
+        # TODO: more optimal choice of W
+        w_matrix = tf.Variable(np.diag(np.ones(conf["no_of_predicates"])),
+                               dtype=tf.float32)
+
+        if conf["model_type"] == "lusi":
+
+            m = LusiModel(w_matrix, model=model)
+            m.add_optimizer(keras.optimizers.SGD())
+
+
+        elif conf["model_type"] == "erm-lusi":
+            m = LusiErm(w_matrix, conf["alpha"], model=model,
+                        erm_loss=tf.keras.losses.BinaryCrossentropy())
+            m.add_optimizer(keras.optimizers.SGD())
+
+        else:
+            # base model, compile
+            m = ERM(model=model)
+            m.compile(
+                optimizer=keras.optimizers.SGD(),
+                loss = keras.losses.BinaryCrossentropy(),
+                metrics=eval_metrics
+                )
+        
+        # parse total_data parameter, create periphery instance
+        train_data = lusi_periphery.get_data_excerpt(train_data,
+                        balanced=True, size_of_excerpt=\
+                            float(conf["total_data"]))
+        
+        periph = lusi_periphery.Periphery(train_data, test_data, phi)
+
+        # parse batch data info, get batched data
+        train_batch = periph.generate_batch_data(
+                                batch_size_1=conf["batch_size"][0],
+                                batch_size_2=conf["batch_size"][1],
+                                train_only=True)[0]
+        
+        # train model
+        if conf["model_type"] in {"erm-lusi", "lusi"}:
+            m.train(train_batch, epochs=conf["epochs"], verbose=False)
+            results.append(m.evaluate(test_data, eval_metrics))
+
+        else:
+            # standard keras erm model
+            m.train(periph.train_data_x, periph.train_data_y,
+                    epochs=conf["epochs"], 
+                    batch_size=conf["batch_size"][0])    
+
+            results.append(m.evaluate(test_data[0], test_data[1],
+                                      batch_size=test_data[0].shape[0]))
+            # results.append(m.evaluate(test_data[0], test_data[1],
+            #                          batch_size=test_data[0].shape[0]))
+
+    return conf, results
+
 
 
 def grid_experiment(interesting_combs):
@@ -1436,7 +1585,45 @@ def grid_test():
     res_df.to_csv("res_df.csv")
 
 
+def multi_exp():
+    (x_train, y_train), (x_test, y_test) = keras.datasets.mnist.load_data()
+    # extract 7 and 8
+    eights = x_train[y_train == 8]/255
+    sevens = x_train[y_train == 7]/255
+    y_eights = np.ones(eights.shape[0])
+    y_sevens = np.zeros(sevens.shape[0])
+    # merge 7 and 8
+    x_train = np.concatenate([eights, sevens])
+    y_train = np.concatenate([y_eights, y_sevens])
+
+    # same for test data
+    eights_test = x_test[y_test == 8]/255
+    sevens_test = x_test[y_test == 7]/255
+    y_eights_test = np.ones(eights_test.shape[0])
+    y_sevens_test = np.zeros(sevens_test.shape[0])
+    x_test = np.concatenate([eights_test, sevens_test])
+    y_test = np.concatenate([y_eights_test, y_sevens_test])
+    
+    pool = multiprocessing.Pool(6)
+    grid_exps = grid_experiment(grid_dict)
+
+
+    mp_run = functools.partial(run_config_multi, train_data=(x_train, y_train), test_data=(x_test, y_test),
+                               no_of_runs=5)
+    
+    res = pool.map(mp_run, grid_exps[-100:])
+
+    res_df = eval_jobs_multi(res)
+
+    now = datetime.now().strftime("%m-%d-%Y_%H_%M_%S")
+    res_df.to_csv(f"res_df_{now}.csv")
+
+    return None
+
+
+
 if __name__ == "__main__":
     # main()
     # experiments()
-    grid_test()
+    # grid_test()
+    multi_exp()
