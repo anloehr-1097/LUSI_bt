@@ -1,6 +1,9 @@
-from cgi import test
-from pyexpat import model
-from re import L
+# from cgi import test
+# from pyexpat import model
+# from re import L
+import itertools
+import functools
+from datetime import datetime
 import tensorflow as tf
 from tensorflow.keras.datasets import mnist
 from tensorflow import keras
@@ -8,7 +11,6 @@ from tensorflow.keras import layers
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd 
-import functools
 from  pprint import pprint
 from scipy import ndimage as ndimage
 import lusi_periphery
@@ -1149,6 +1151,27 @@ def run_config(conf, train_data, test_data, no_of_runs=10,
     return results
 
 
+def grid_experiment(interesting_combs):
+    """Run grid experiment given interesring hyperparameter combinations
+    
+    Parameters:
+
+    interesting_combs :: dict
+        Dictionary of interesting hyperparameter combinations.
+        See grid_combs for example.
+
+    Returns: pd.DataFrame
+    """
+    # from interesting_combs, build all combinations
+    combs = [interesting_combs[k] for k in interesting_combs.keys()]
+    grid = [p for p in itertools.product(*combs)]
+    grid_list = [
+        {k : v for k, v in zip(interesting_combs.keys(), ge)} for ge in grid
+        ]
+    
+    return grid_list
+
+
 config_dict = {
     # interpretation: in which framework to train model
     "model_type" : ["lusi", "erm", "erm-lusi"],
@@ -1160,7 +1183,11 @@ config_dict = {
                     (3, [100, 50, 20]), (3, [500, 200, 100]),
                     (3, [500, 100, 20]),
                     (4, [500, 300, 200, 100]), (4, [500, 200, 100, 50]),
-                    (4, [500, 200, 50, 10]), (4, [100, 50, 20, 10])],
+                    (4, [500, 200, 50, 10]), (4, [100, 50, 20, 10]),
+                    (5, [[500, 400, 200, 100, 50]]),
+                    (5, [[500, 250, 100, 50, 20]]),
+                    (5, [[500, 200, 100, 25, 10]])],
+
     # interpretation: total data used for training
     "total_data" : [6000, 3000, 1000, 500, 200, 100, 64],
     
@@ -1178,6 +1205,31 @@ config_dict = {
     "alpha" : [0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.99]}
 
 config_dict = {hparam : np.asarray(v, dtype="object") for hparam, v in config_dict.items()}
+
+
+grid_dict = {
+    "model_type" : ["lusi", "erm", "erm-lusi"],
+    "model_arch" : [
+                    (3, [200, 100, 20]),
+                    (4, [500, 300, 200, 100]),
+                    (5, [500, 200, 100, 25, 10])],
+    
+    "total_data" : [1000, 200, 64],
+    
+    "batch_size" : [(128, 128), (64, 64), (64, 32),
+                    (16, 16)],
+    
+    # interpretation: no. of predicates to use in LUSI and ERM-LUSI training
+    "no_of_predicates" : [3, 6, 11],
+
+    # interpretation: number of epochs to train model
+    "epochs" : [5, 10, 30],
+
+    # interpretation: weighting factor in ERM-LUSI training.
+    "alpha" : [0.3, 0.8]
+    }
+
+grid_dict = {hparam : np.asarray(v, dtype="object") for hparam, v in grid_dict.items()}
 
 
 # partial func defs for use with Periphery class
@@ -1349,13 +1401,42 @@ def experiments():
     y_test = np.concatenate([y_eights_test, y_sevens_test])
 
 
-    rand_exps = random_experiment(config_dict, n_jobs=4)
+    # rand_exps = random_experiment(config_dict, n_jobs=4)
+    rand_exps = random_experiment(grid_dict, n_jobs=20)
     res_df = run_and_eval_jobs(rand_exps, (x_train, y_train), (x_test, y_test),
-                               no_of_runs=1)
-    
-    res_df.to_csv("res_df.csv")
+                               no_of_runs=5)
+    now = datetime.now().strftime("%m-%d-%Y_%H_%M_%S")
+    res_df.to_csv(f"res_df_{now}.csv")
     return None
 
+
+def grid_test():
+    (x_train, y_train), (x_test, y_test) = keras.datasets.mnist.load_data()
+    # extract 7 and 8
+    eights = x_train[y_train == 8]/255
+    sevens = x_train[y_train == 7]/255
+    y_eights = np.ones(eights.shape[0])
+    y_sevens = np.zeros(sevens.shape[0])
+    # merge 7 and 8
+    x_train = np.concatenate([eights, sevens])
+    y_train = np.concatenate([y_eights, y_sevens])
+
+    # same for test data
+    eights_test = x_test[y_test == 8]/255
+    sevens_test = x_test[y_test == 7]/255
+    y_eights_test = np.ones(eights_test.shape[0])
+    y_sevens_test = np.zeros(sevens_test.shape[0])
+    x_test = np.concatenate([eights_test, sevens_test])
+    y_test = np.concatenate([y_eights_test, y_sevens_test])
+
+    grid_exps = grid_experiment(grid_dict)
+    res_df = run_and_eval_jobs(grid_exps, (x_train, y_train), (x_test, y_test),
+                               no_of_runs=5)
+    
+    res_df.to_csv("res_df.csv")
+
+
 if __name__ == "__main__":
-    main()
+    # main()
     # experiments()
+    grid_test()

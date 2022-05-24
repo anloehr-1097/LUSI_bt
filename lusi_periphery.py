@@ -1,6 +1,8 @@
 import tensorflow as tf
 import numpy as np
 import functools
+import itertools
+import re
 import matplotlib.pyplot as plt
 from primefac import primefac
 from pprint import pprint
@@ -375,6 +377,110 @@ def visual_validation(n, data):
 
     return None
 
+
+def parse_model_arch(arch):
+    """Parse model architecture entry from result dataframe.
+    
+    Parameters:
+
+    arch :: str
+        architecture string of the form '[d, list(d, d, d)]' where d is numeral.
+    
+    Returns:
+
+    """
+    
+    layers_re = r"[\d]+(?= list)"
+    width_re = r"(?<=list\(\[)[\d ,]+"
+    model_layer_list = re.findall(layers_re, arch)[0].split(", ")
+    model_width_list = re.findall(width_re, arch)[0].split(", ")
+    widths = [int(d) for d in model_width_list]
+    layers = [int(l) for l in model_layer_list]
+    
+    if not len(layers) == 1:
+        raise Exception(f"Layers should be of int type. Instead got the value {layers}")
+    
+    layers = layers[0]
+    
+    return layers, widths
+
+
+def parse_parsed_arch(parsed_arch):
+    """Extract widths and depth of network form parsed_arch.
+    
+    Parameters:
+
+    parsed_arch ::  pd.Series
+        return from parse_model_arch function applied to entire column via
+        df method.
+    
+    Returns: tuple containing 2 pd.Series, one for no. of layers,
+             one for list of layers' breadths.
+    """
+    
+    depths = parsed_arch.apply(lambda x: x[0])
+    widths = parsed_arch.apply(lambda x: x[1])
+    
+    return depths, widths
+    
+
+def parse_batch_size(bs):
+    """"Parse batch size column from testing result_dataframe.
+   
+    Parameters:
+
+    bs :: str
+        string of the form '[d, d]' where d is numeral.
+
+    Returns:
+    List containing batch size 1 and batch size 2.   
+    """
+    
+    bs = bs.replace("[", "").replace("]", "").split(" ")
+    bs_list = [int(s) for s in bs]
+    return bs_list
+
+
+def parse_res_def(df):
+    """Parse results dataframe s.t. it is easier to process.
+    
+    df :: pd.DataFrame
+        Dataframe as obtained by the function run_and_eval_jobs in lusi_Andreas_Loehr.
+    
+    Returns: 
+    """
+    # from col seven of original df onwards acc scores
+    df["avg_bin_acc"] = df.to_numpy()[:, 7:].mean(axis=1)
+
+    model_arch = df["model_arch"].apply(parse_model_arch)
+    depths, widths = parse_parsed_arch(model_arch)
+    df["layers"] = depths
+    
+    max_depth = 10
+    width_ar = np.zeros(len(widths)*max_depth).reshape(len(widths), max_depth)
+    
+    for i, width in enumerate(widths):
+        # print(f"i = {i}, width={width}")
+        for j, d in enumerate(width):
+            # print(f"j = {j}, d={d}")
+
+            width_ar[i,j] = d
+    for w in range(10):
+        df[f"width_{w+1}"] = width_ar[:, w]
+    
+    batch_sizes = df["batch_size"].apply(parse_batch_size)
+
+    df["batch_size_1"] = batch_sizes.apply(lambda x: x[0])
+    df["batch_size_2"] = batch_sizes.apply(lambda x: x[1])
+
+    df.drop(columns=["model_arch", "batch_size"], inplace=True)
+
+    order_cols = df.columns.to_list()[0:5] + df.columns.to_list()[16:] + \
+        df.columns.to_list()[5:16]
+    df = df[order_cols]
+    
+    return df
+    
 
 
 def main():
