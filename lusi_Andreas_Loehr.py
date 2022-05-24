@@ -1610,13 +1610,13 @@ def multi_exp():
 
     mp_run = functools.partial(run_config_multi, train_data=(x_train, y_train), test_data=(x_test, y_test),
                                no_of_runs=5)
-    
-    res = pool.map(mp_run, grid_exps[-100:])
+
+    res = pool.map(mp_run, grid_exps[-350:-300])
 
     res_df = eval_jobs_multi(res)
 
     now = datetime.now().strftime("%m-%d-%Y_%H_%M_%S")
-    res_df.to_csv(f"res_df_{now}.csv")
+    res_df.to_csv(f"res_df_{now}_-350-300.csv")
 
     return None
 
