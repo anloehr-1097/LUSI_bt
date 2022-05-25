@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd 
 from  pprint import pprint
 from scipy import ndimage as ndimage
-import 2_lusi_periphery as lusi_periphery
+import lusi_periphery as lusi_periphery
 import multiprocessing
 
 
