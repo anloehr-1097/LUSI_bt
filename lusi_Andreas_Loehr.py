@@ -1605,7 +1605,7 @@ def multi_exp():
 
 
 if __name__ == "__main__":
-    # main()
+    main()
     # experiments()
     # grid_test()
-    multi_exp()
+    # multi_exp()
