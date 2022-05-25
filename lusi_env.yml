@@ -1,4 +1,4 @@
-name: lusi_test
+name: lusi
 channels:
   - anaconda
   - conda-forge
