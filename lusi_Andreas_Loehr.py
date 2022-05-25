@@ -1038,6 +1038,10 @@ def run_and_eval_jobs(jobs, train_data, test_data, no_of_runs=10,
 
 
 def eval_jobs_multi(job_res):
+    """Similar to run_and_eval_jobs function but for multiprocessing.
+    
+    Supports output from run_config_multi.
+    """
     
 
     no_of_runs = len(job_res[0][1])
@@ -1186,35 +1190,10 @@ def run_config(conf, train_data, test_data, no_of_runs=10,
 def run_config_multi(conf, train_data, test_data, no_of_runs=10,
         eval_metrics=[modify_metric(tf.keras.metrics.BinaryAccuracy(),
                                     tag="pred_and_true")]):
-    """Run a job/ config and return results.
+    """Run a job/ config and return results. Multiprocessing version.
     
-    Interpret config dictionary, build model, run training on data and
-    evaluate model on test dataset given hyperparameter values as provided in
-    conf. Do this no_of_runs times.
-
-    Parameters:
-    
-    conf :: dict
-        See function 'run_and_eval_jobs' for documentation regarding dict
-        structure.
-
-    train_data :: tuple(np.ndarray, np.ndarray)
-        See function 'run_and_eval_jobs' for documentation regarding param.
-
-    test_data :: tuple(np.ndarray, np.ndarray)
-        See function 'run_and_eval_jobs' for documentation regarding param.
-    
-    no_of_runs :: int
-        Number of runs to make for same model to gauge variance of results.
-        See function 'run_and_eval_jobs' for documentation regarding param.
-    
-    eval_metrics :: list[modify_metric(tf.keras.metrics object)]
-        See function 'run_and_eval_jobs' for documentation regarding param.
-
-    Return :: list[tuple[metric_name, metric_result]]
-        Return list of results for given metrics, where number of entries in
-        list equals no_of_runs.
-    
+    See run_config for more information. Difference: conf AND result vars
+    are returned
     """
     
     results = []
@@ -1560,6 +1539,8 @@ def experiments():
 
 
 def grid_test():
+    """Grid test without multiprocesing."""
+
     (x_train, y_train), (x_test, y_test) = keras.datasets.mnist.load_data()
     # extract 7 and 8
     eights = x_train[y_train == 8]/255
@@ -1586,6 +1567,7 @@ def grid_test():
 
 
 def multi_exp():
+    """Grid test with multiprocessing."""
     (x_train, y_train), (x_test, y_test) = keras.datasets.mnist.load_data()
     # extract 7 and 8
     eights = x_train[y_train == 8]/255
@@ -1611,12 +1593,12 @@ def multi_exp():
     mp_run = functools.partial(run_config_multi, train_data=(x_train, y_train), test_data=(x_test, y_test),
                                no_of_runs=5)
 
-    res = pool.map(mp_run, grid_exps[-350:-300])
+    res = pool.map(mp_run, grid_exps[-250:-200])
 
     res_df = eval_jobs_multi(res)
 
     now = datetime.now().strftime("%m-%d-%Y_%H_%M_%S")
-    res_df.to_csv(f"res_df_{now}_-350-300.csv")
+    res_df.to_csv(f"res_df_{now}_-250_200.csv")
 
     return None
 
